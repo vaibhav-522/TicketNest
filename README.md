@@ -519,4 +519,5 @@ NODE_ENV=production node index.js
 
 *Built with ❤️ using the MERN stack + Socket.io + Stripe integration*
 #   T i c k e t N e s t  
+ #   T i c k e t N e s t  
  

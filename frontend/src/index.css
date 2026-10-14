@@ -1,0 +1,157 @@
+/* Reset and Base Styles */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  margin: 0;
+  padding: 0;
+  background-color: #f4f6f9;
+  color: #333;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* Navbar */
+.navbar {
+  background-color: #333;
+  padding: 1rem 2rem;
+}
+
+.navbar-brand {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #fff;
+}
+
+.navbar-nav .nav-link {
+  color: #fff !important;
+}
+
+.navbar-nav .nav-link:hover {
+  color: #ddd !important;
+}
+
+/* Home Page */
+.home-page h1 {
+  font-size: 3rem;
+  color: #2c3e50;
+}
+
+.lead {
+  font-size: 1.25rem;
+  color: #555;
+}
+
+/* Shows Page */
+.shows-page {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.card {
+  border: none;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.card-img-top {
+  height: 200px;
+  object-fit: cover;
+}
+
+/* Booking Page */
+.seat-container {
+  perspective: 400px;
+}
+
+.seat {
+  width: 40px;
+  height: 40px;
+  background: #e2e6e9;
+  border-radius: 10px;
+  margin: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+  color: #333;
+  transition: all 0.3s ease;
+}
+
+.seat:hover:not(.unavailable) {
+  background: #d1d9e1;
+}
+
+.seat.selected {
+  background: #e74c3c;
+  color: #fff;
+}
+
+.seat.unavailable {
+  background: #95a5a6;
+  color: #fff;
+}
+
+.seat-label {
+  background: #fff;
+  border: 1px solid #ddd;
+  padding: 2px 5px;
+  min-width: 20px;
+  text-align: center;
+}
+
+.alert {
+  padding: 1rem;
+  border-radius: 5px;
+  margin-bottom: 1rem;
+}
+
+.alert-danger {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+/* Login Page */
+.login-page .card {
+  max-width: 400px;
+  padding: 2rem;
+}
+
+.login-page h3 {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+/* Breadcrumb */
+.breadcrumb {
+  background: transparent;
+  padding: 0;
+  margin-bottom: 1rem;
+}
+
+.breadcrumb-item a {
+  color: #666;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .home-page h1 {
+    font-size: 2rem;
+  }
+  
+  .seat {
+    width: 30px;
+    height: 30px;
+    font-size: 10px;
+  }
+}

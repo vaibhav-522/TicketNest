@@ -518,3 +518,5 @@ NODE_ENV=production node index.js
 *This project provides a complete foundation for a ticket booking platform with all core features implemented. Ready for production deployment with the noted enhancements.*
 
 *Built with ❤️ using the MERN stack + Socket.io + Stripe integration*
+#   T i c k e t N e s t  
+ 

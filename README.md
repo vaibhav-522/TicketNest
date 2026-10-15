@@ -1,6 +1,6 @@
 # TicketNest
 
-TicketNest is a React/Vite frontend with an Express API, MongoDB persistence, JWT-cookie authentication, Socket.IO, and optional Stripe PaymentIntents.
+TicketNest is a React/Vite frontend with an Express API, MongoDB persistence, JWT-cookie authentication, Socket.IO, and optional Stripe Checkout payments.
 
 ## Project structure
 
@@ -54,7 +54,7 @@ npm run dev
 
 Open the URL Vite prints, usually `http://localhost:5173`. Vite proxies `/api` requests to the backend. `frontend/.env` contains the optional `VITE_API_URL` proxy target; leave it as `http://localhost:5000` for local development.
 
-To enable Stripe PaymentIntents, set `STRIPE_SECRET_KEY` in `backend/.env` to a Stripe test secret key. Without it, the payment endpoint responds that payments are disabled.
+To enable real payments, set `STRIPE_SECRET_KEY` in `backend/.env` to a Stripe secret key (`sk_test_...` for test mode). Bookings then go through hosted **Stripe Checkout**: the browser redirects to Stripe, and on return the backend verifies the payment server-side before reserving seats. If a seat is taken while paying, the charge is refunded automatically. Without `STRIPE_SECRET_KEY`, bookings complete without payment (handy for local development).
 
 ## Dependencies
 
@@ -73,7 +73,8 @@ Frontend runtime dependencies: React, React DOM, React Router, React Hook Form, 
 - `GET /api/shows/:id`
 - `POST /api/bookings` (authenticated)
 - `GET /api/bookings/user` (authenticated)
-- `POST /api/payment/create-intent` (requires Stripe configuration)
+- `POST /api/payment/checkout` (authenticated; creates a Stripe Checkout session)
+- `POST /api/payment/confirm` (authenticated; verifies payment and creates the booking)
 
 ## Deploy on Vercel (frontend + backend together)
 

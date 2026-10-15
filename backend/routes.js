@@ -203,26 +203,169 @@ router.get(
   })
 );
 
+// Stripe is optional. When STRIPE_SECRET_KEY is set we run a real Checkout flow;
+// otherwise bookings fall back to the no-payment path used for local development.
+const stripeClient = () =>
+  process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+
+const clientUrl = () => process.env.CLIENT_URL || 'http://localhost:5173';
+
+const MAX_SEATS_PER_BOOKING = 8;
+
+const parseSeats = (seats) => {
+  if (!Array.isArray(seats) || seats.length === 0 || seats.length > MAX_SEATS_PER_BOOKING) {
+    return { error: `Choose between 1 and ${MAX_SEATS_PER_BOOKING} seats` };
+  }
+  const cleaned = seats.map((seat) => String(seat).trim()).filter(Boolean);
+  if (cleaned.length !== seats.length || new Set(cleaned).size !== cleaned.length) {
+    return { error: 'Duplicate or invalid seats are not allowed' };
+  }
+  return { seats: cleaned };
+};
+
 router.post(
-  '/payment/create-intent',
+  '/payment/checkout',
+  requireAuth,
   asyncRoute(async (req, res) => {
-    if (!process.env.STRIPE_SECRET_KEY) {
+    const stripe = stripeClient();
+    if (!stripe) {
       return res.status(503).json({
         success: false,
         message: 'Payments are disabled. Configure STRIPE_SECRET_KEY to enable them.',
       });
     }
-    const amount = Number(req.body.amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      return res.status(400).json({ success: false, message: 'A positive payment amount is required' });
+
+    const parsed = parseSeats(req.body.seats);
+    if (parsed.error) {
+      return res.status(400).json({ success: false, message: parsed.error });
+    }
+    const { seats } = parsed;
+
+    const show = await Show.findById(req.body.showId);
+    if (!show || !show.isActive) {
+      return res.status(404).json({ success: false, message: 'Show not found' });
     }
 
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-    const intent = await stripe.paymentIntents.create({
-      amount: Math.round(amount * 100),
-      currency: req.body.currency || 'inr',
+    const unavailable = seats.filter((seat) => !show.availableSeats.includes(seat));
+    if (unavailable.length) {
+      return res.status(409).json({
+        success: false,
+        message: `These seats are no longer available: ${unavailable.join(', ')}`,
+      });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      line_items: [
+        {
+          price_data: {
+            currency: 'inr',
+            product_data: {
+              name: `${show.title} — ${seats.length} seat${seats.length > 1 ? 's' : ''}`,
+              description: `${show.theater}, ${show.location} • Seats ${seats.join(', ')}`,
+            },
+            unit_amount: Math.round(show.price * 100),
+          },
+          quantity: seats.length,
+        },
+      ],
+      metadata: {
+        userId: req.auth.userId,
+        showId: show._id.toString(),
+        seats: seats.join(','),
+      },
+      success_url: `${clientUrl()}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${clientUrl()}/booking/${show._id.toString()}?canceled=1`,
     });
-    return res.json({ success: true, id: intent.id, clientSecret: intent.client_secret });
+
+    return res.json({ success: true, url: session.url, sessionId: session.id });
+  })
+);
+
+router.post(
+  '/payment/confirm',
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const stripe = stripeClient();
+    if (!stripe) {
+      return res.status(503).json({
+        success: false,
+        message: 'Payments are disabled. Configure STRIPE_SECRET_KEY to enable them.',
+      });
+    }
+
+    const { sessionId } = req.body;
+    if (!sessionId) {
+      return res.status(400).json({ success: false, message: 'A checkout session id is required' });
+    }
+
+    // Idempotent: the success page may be refreshed after the booking exists.
+    const existing = await Booking.findOne({ stripeSessionId: sessionId });
+    if (existing) {
+      return res.json({ success: true, booking: existing, alreadyConfirmed: true });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.payment_status !== 'paid') {
+      return res.status(402).json({ success: false, message: 'This payment has not completed yet.' });
+    }
+
+    const meta = session.metadata || {};
+    if (meta.userId !== req.auth.userId) {
+      return res.status(403).json({ success: false, message: 'This payment belongs to another account.' });
+    }
+
+    const seats = String(meta.seats || '')
+      .split(',')
+      .map((seat) => seat.trim())
+      .filter(Boolean);
+    if (!seats.length) {
+      return res.status(400).json({ success: false, message: 'This payment has no seats attached.' });
+    }
+
+    const reservedShow = await Show.findOneAndUpdate(
+      { _id: meta.showId, isActive: true, availableSeats: { $all: seats } },
+      { $pull: { availableSeats: { $in: seats } } },
+      { new: true }
+    );
+
+    if (!reservedShow) {
+      // Someone else took the seats while the customer was paying: refund automatically.
+      let refunded = false;
+      try {
+        if (session.payment_intent) {
+          await stripe.refunds.create({ payment_intent: session.payment_intent });
+          refunded = true;
+        }
+      } catch (error) {
+        console.error('Automatic refund failed:', error);
+      }
+      return res.status(409).json({
+        success: false,
+        message: refunded
+          ? 'Those seats were just taken, so your payment was automatically refunded.'
+          : 'Those seats were just taken. Please contact support about your payment.',
+      });
+    }
+
+    const booking = await Booking.create({
+      user: req.auth.userId,
+      show: reservedShow._id,
+      seats,
+      totalPrice: seats.length * reservedShow.price,
+      paymentId: session.payment_intent || session.id,
+      status: 'confirmed',
+      stripeSessionId: sessionId,
+    });
+
+    socketServer?.emit('booking-confirmed', {
+      bookingId: booking._id,
+      showId: reservedShow._id,
+      seats,
+      remainingSeats: reservedShow.availableSeats.length,
+    });
+
+    return res.status(201).json({ success: true, booking });
   })
 );
 

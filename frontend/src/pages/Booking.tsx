@@ -93,28 +93,37 @@ const Booking: React.FC = () => {
 
     setSubmitting(true);
     try {
-      // If Stripe is configured, create a PaymentIntent first. Otherwise continue without one.
-      let paymentId: string | undefined;
-      try {
-        const intentRes = await fetch('/api/payment/create-intent', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ amount: totalPrice, currency: 'inr' }),
-        });
-        if (intentRes.ok) {
-          const intent = await intentRes.json();
-          paymentId = intent.id;
+      // Preferred path: hand off to Stripe Checkout (real payment).
+      const checkoutRes = await fetch('/api/payment/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ showId: id, seats: selected }),
+      });
+
+      if (checkoutRes.status === 401) {
+        alert('Please sign in to complete your booking.');
+        navigate('/auth/login');
+        return;
+      }
+
+      // 503 = Stripe not configured. Fall back to a payment-less booking (local dev).
+      if (checkoutRes.status !== 503) {
+        const checkout = await checkoutRes.json();
+        if (!checkoutRes.ok) {
+          throw new Error(checkout.message || 'Could not start checkout');
         }
-      } catch {
-        // Payments are optional; booking can still be completed.
+        if (checkout.url) {
+          window.location.href = checkout.url;
+          return;
+        }
       }
 
       const res = await fetch('/api/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ showId: id, seats: selected, paymentId }),
+        body: JSON.stringify({ showId: id, seats: selected }),
       });
 
       if (res.status === 401) {

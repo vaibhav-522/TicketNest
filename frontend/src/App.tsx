@@ -4,6 +4,7 @@ import Navbar from './components/Navbar';
 import Home from './pages/Home';
 import Shows from './pages/Shows';
 import Booking from './pages/Booking';
+import PaymentSuccess from './pages/PaymentSuccess';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import { useAuth } from './hooks/useAuth';
@@ -36,6 +37,7 @@ const App: React.FC = () => {
           <Route path="/" element={<Home />} />
           <Route path="/shows" element={<Shows />} />
           <Route path="/booking/:id" element={<Booking />} />
+          <Route path="/payment/success" element={<PaymentSuccess />} />
           <Route path="/auth/login" element={<Login />} />
           <Route path="/auth/register" element={<Register />} />
           <Route path="*" element={<Navigate to="/" replace />} />

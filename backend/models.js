@@ -33,8 +33,9 @@ const bookingSchema = new mongoose.Schema(
     show: { type: mongoose.Schema.Types.ObjectId, ref: 'Show', required: true },
     seats: { type: [String], required: true },
     totalPrice: { type: Number, required: true },
-    status: { type: String, enum: ['confirmed', 'cancelled'], default: 'confirmed' },
+    status: { type: String, enum: ['pending', 'confirmed', 'cancelled'], default: 'confirmed' },
     paymentId: String,
+    stripeSessionId: { type: String, index: true, sparse: true },
     bookedAt: { type: Date, default: Date.now },
   },
   { timestamps: true }

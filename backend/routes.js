@@ -226,7 +226,10 @@ router.post(
   })
 );
 
-export const registerRoutes = (app, io) => {
+export const setSocketServer = (io) => {
   socketServer = io;
+};
+
+export const registerRoutes = (app) => {
   app.use('/api', router);
 };

@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
+import { useAuth } from '../hooks/useAuth';
 
 const Register: React.FC = () => {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [error, setError] = useState<string | null>(null);
 
   // Schema validation for registration
@@ -31,13 +33,11 @@ const Register: React.FC = () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(data),
+        credentials: 'include',
       });
 
       if (res.ok) {
-        const result = await res.json();
-        // Auto-login after registration
-        localStorage.setItem('vanny-user-token', result.token || '');
-        localStorage.setItem('vanny-user-name', result.user?.name || '');
+        await login(data.email, data.password);
         navigate('/shows');
       } else {
         const errorData = await res.json();
@@ -45,7 +45,7 @@ const Register: React.FC = () => {
       }
     } catch (error) {
       console.error('Registration error:', error);
-      setError('An error occurred. Please try again.');
+      setError(error instanceof Error ? error.message : 'An error occurred. Please try again.');
     }
   };
 
@@ -115,7 +115,7 @@ const Register: React.FC = () => {
             </form>
 
             <p className="text-center mt-3 small">
-              Already have an account? <a href="/auth/login" className="underline">Sign In</a>
+              Already have an account? <Link to="/auth/login">Sign in</Link>
             </p>
           </div>
         </div>

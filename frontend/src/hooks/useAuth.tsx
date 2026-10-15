@@ -1,11 +1,21 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 
-// Create context with default values for SSR safety
-const AuthContext = createContext({
-  user: null,
-  isAuthenticated: false,
-  loading: true,
-});
+type User = {
+  id: string;
+  name: string;
+  email: string;
+  role: 'user' | 'admin';
+};
+
+type AuthContextValue = {
+  user: User | null;
+  isAuthenticated: boolean;
+  loading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+};
+
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -15,78 +25,59 @@ export const useAuth = () => {
   return context;
 };
 
-// AuthProvider component for wrapping the app
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
-  children,
-}) => {
-  const [user, setUser] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const initAuth = async () => {
       try {
-        const res = await fetch('/api/auth/me', {
-          credentials: 'include',
-        });
-
-        if (res.ok) {
-          const result = await res.json();
+        const response = await fetch('/api/auth/me', { credentials: 'include' });
+        if (response.ok) {
+          const result = await response.json();
           setUser(result.user);
-          setIsAuthenticated(true);
-        } else {
-          setIsAuthenticated(false);
+        } else if (response.status !== 401) {
+          throw new Error(`Could not restore the session (${response.status})`);
         }
-      } catch (err) {
-        setIsAuthenticated(false);
+      } catch (error) {
+        console.error('Authentication initialization failed:', error);
       } finally {
         setLoading(false);
       }
     };
 
-    initAuth();
+    void initAuth();
   }, []);
 
-  // Login function
   const login = async (email: string, password: string) => {
-    const res = await fetch('/api/auth/login', {
+    const response = await fetch('/api/auth/login', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
       credentials: 'include',
     });
-
-    if (res.ok) {
-      const result = await res.json();
-      setUser(result.user);
-      setIsAuthenticated(true);
-      // Store token in localStorage as fallback
-      localStorage.setItem('vanny-user-token', result.token || '');
-      localStorage.setItem('vanny-user-name', result.user?.name || '');
-    } else {
-      throw new Error('Login failed');
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.message || 'Login failed');
     }
+    setUser(result.user);
   };
 
-  // Logout function
   const logout = async () => {
-    const res = await fetch('/api/auth/logout', {
+    const response = await fetch('/api/auth/logout', {
       method: 'POST',
       credentials: 'include',
     });
-
-    if (res.ok) {
-      setUser(null);
-      setIsAuthenticated(false);
-      localStorage.removeItem('vanny-user-token');
-      localStorage.removeItem('vanny-user-name');
+    if (!response.ok) {
+      throw new Error('Logout failed');
     }
+    setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated, login, logout }}>
+    <AuthContext.Provider
+      value={{ user, isAuthenticated: user !== null, loading, login, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -1,157 +1,187 @@
-/* Reset and Base Styles */
+:root {
+  --ticketnest-primary: #4b2e83;
+  --ticketnest-accent: #ff5a5f;
+  --ticketnest-dark: #151522;
+}
+
 * {
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
 body {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   margin: 0;
-  padding: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   background-color: #f4f6f9;
-  color: #333;
+  color: #22252a;
 }
 
 a {
   text-decoration: none;
-  color: inherit;
 }
 
-button {
-  cursor: pointer;
+/* Layout: leave room for the fixed navbar */
+.app-main {
+  padding-top: 72px;
+  min-height: calc(100vh - 72px);
 }
 
 /* Navbar */
-.navbar {
-  background-color: #333;
-  padding: 1rem 2rem;
+.navbar.bg-primary {
+  background-color: var(--ticketnest-primary) !important;
 }
 
-.navbar-brand {
-  font-size: 1.5rem;
-  font-weight: bold;
-  color: #fff;
-}
-
-.navbar-nav .nav-link {
+.navbar .nav-link.active {
+  font-weight: 600;
   color: #fff !important;
 }
 
-.navbar-nav .nav-link:hover {
-  color: #ddd !important;
+/* Hero */
+.hero-section {
+  background:
+    linear-gradient(rgba(21, 21, 34, 0.72), rgba(21, 21, 34, 0.72)),
+    linear-gradient(135deg, #4b2e83 0%, #7b2ff7 45%, #ff5a5f 100%);
+  min-height: 78vh;
+  display: flex;
+  align-items: center;
 }
 
-/* Home Page */
-.home-page h1 {
-  font-size: 3rem;
-  color: #2c3e50;
+.feature-card {
+  border: 1px solid rgba(75, 46, 131, 0.15);
+  border-radius: 14px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.lead {
-  font-size: 1.25rem;
-  color: #555;
+.feature-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 30px rgba(21, 21, 34, 0.12);
 }
 
-/* Shows Page */
-.shows-page {
-  max-width: 1200px;
-  margin: 0 auto;
+.text-primary {
+  color: var(--ticketnest-primary) !important;
+}
+
+.btn-primary {
+  background-color: var(--ticketnest-primary);
+  border-color: var(--ticketnest-primary);
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+  background-color: #3a2366;
+  border-color: #3a2366;
 }
 
 .card {
-  border: none;
-  border-radius: 10px;
-  overflow: hidden;
+  border-radius: 12px;
 }
 
-.card-img-top {
+/* Shows grid */
+.show-card {
+  overflow: hidden;
+  height: 100%;
+}
+
+.show-card .card-img-top,
+.show-card .show-placeholder {
   height: 200px;
   object-fit: cover;
 }
 
-/* Booking Page */
-.seat-container {
-  perspective: 400px;
-}
-
-.seat {
-  width: 40px;
-  height: 40px;
-  background: #e2e6e9;
-  border-radius: 10px;
-  margin: 2px;
+.show-placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  font-weight: bold;
-  color: #333;
-  transition: all 0.3s ease;
+  background: linear-gradient(135deg, #4b2e83, #7b2ff7);
+  color: #fff;
+  font-size: 2.5rem;
 }
 
-.seat:hover:not(.unavailable) {
-  background: #d1d9e1;
+.rating-star {
+  color: #d7dbe0;
+}
+
+.rating-star.filled {
+  color: #ffb400;
+}
+
+/* Booking / seat map */
+.booking-page {
+  max-width: 1100px;
+}
+
+.seat-map {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 1rem 0;
+}
+
+.seat-row {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.seat {
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 8px;
+  background: #e6e9ee;
+  color: #333;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.seat.available:hover {
+  background: #cfd6df;
+  transform: translateY(-2px);
 }
 
 .seat.selected {
-  background: #e74c3c;
+  background: var(--ticketnest-accent);
   color: #fff;
 }
 
 .seat.unavailable {
-  background: #95a5a6;
-  color: #fff;
+  background: #aab3bd;
+  color: #f4f6f9;
+  cursor: not-allowed;
 }
 
-.seat-label {
-  background: #fff;
-  border: 1px solid #ddd;
-  padding: 2px 5px;
-  min-width: 20px;
-  text-align: center;
-}
-
-.alert {
-  padding: 1rem;
+.seat-legend {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
   border-radius: 5px;
-  margin-bottom: 1rem;
+  vertical-align: middle;
+  margin-right: 6px;
 }
 
-.alert-danger {
-  background: #f8d7da;
-  color: #721c24;
+/* Auth pages */
+.auth-page {
+  padding: 4rem 1rem;
 }
 
-/* Login Page */
-.login-page .card {
-  max-width: 400px;
-  padding: 2rem;
-}
-
-.login-page h3 {
-  text-align: center;
-  margin-bottom: 2rem;
-}
-
-/* Breadcrumb */
 .breadcrumb {
   background: transparent;
   padding: 0;
-  margin-bottom: 1rem;
 }
 
-.breadcrumb-item a {
-  color: #666;
-}
-
-/* Responsive */
 @media (max-width: 768px) {
-  .home-page h1 {
-    font-size: 2rem;
-  }
-  
   .seat {
-    width: 30px;
-    height: 30px;
+    width: 28px;
+    height: 28px;
     font-size: 10px;
   }
 }

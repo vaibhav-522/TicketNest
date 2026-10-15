@@ -1,103 +1,81 @@
-import React, { useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import React, { useState } from 'react';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth';
 
 const Navbar: React.FC = () => {
+  const { user, isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
-  const [isMenuOpen, setIsMenuOpen] = React.useState(false);
-
-  // Check auth state on mount
-  useEffect(() => {
-    checkAuthStatus();
-  }, []);
-
-  const checkAuthStatus = async () => {
-    try {
-      const res = await fetch('/api/auth/me', {
-        credentials: 'include',
-      });
-      if (!res.ok) {
-        setIsMenuOpen(false);
-      }
-    } catch (e) {
-      setIsMenuOpen(false);
-    }
-  };
+  const [isOpen, setIsOpen] = useState(false);
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', {
-        method: 'POST',
-        credentials: 'include',
-      });
-      localStorage.removeItem('vanny-show-token');
+      await logout();
+    } finally {
+      setIsOpen(false);
       navigate('/');
-    } catch (error) {
-      navigate('/auth/login');
     }
   };
 
   return (
     <nav className="navbar navbar-expand-lg navbar-dark bg-primary fixed-top">
       <div className="container-fluid">
-        <Link to="/" className="navbar-brand">
-          <span className="fw-bold display-6">TicketNest</span>
+        <Link to="/" className="navbar-brand d-flex align-items-center gap-2">
+          <i className="bi bi-ticket-perforated-fill" />
+          <span className="fw-bold">TicketNest</span>
         </Link>
 
         <button
           className="navbar-toggler"
           type="button"
           aria-label="Toggle navigation"
-          onClick={() => setIsMenuOpen(!isMenuOpen)}
+          aria-expanded={isOpen}
+          onClick={() => setIsOpen((open) => !open)}
         >
           <span className="navbar-toggler-icon" />
         </button>
 
-        <div className="collapse navbar-collapse" id="navbarnav">
-          <ul className="navbar-nav me-auto">
+        <div className={`collapse navbar-collapse${isOpen ? ' show' : ''}`}>
+          <ul className="navbar-nav me-auto mb-2 mb-lg-0">
             <li className="nav-item">
-              <Link to="/" className="nav-link">
-                <i className="bi bi-house-door-fill me-2"></i>
+              <NavLink to="/" end className="nav-link">
+                <i className="bi bi-house-door-fill me-2" />
                 Home
-              </Link>
+              </NavLink>
             </li>
             <li className="nav-item">
-              <Link to="/shows" className="nav-link">
-                <i className="bi bi-cinema-fill me-2"></i>
+              <NavLink to="/shows" className="nav-link">
+                <i className="bi bi-cinema me-2" />
                 Shows
-              </Link>
+              </NavLink>
             </li>
           </ul>
 
-          {/* Right side: auth controls */}
           <div className="d-flex align-items-center gap-2">
-            {window.location.pathname.startsWith('/auth') ? (
+            {isAuthenticated ? (
               <>
+                <span className="navbar-text text-white">
+                  <i className="bi bi-person-circle me-2" />
+                  {user?.name || user?.email}
+                </span>
                 <button
+                  type="button"
                   className="btn btn-outline-light btn-sm"
-                  onClick={() => navigate('/auth/register')}
+                  onClick={handleLogout}
                 >
-                  Register
-                </button>
-                <button
-                  className="btn btn-light ms-2 btn-sm"
-                  onClick={() => navigate('/auth/login')}
-                >
-                  Login
+                  <i className="bi bi-box-arrow-right me-1" />
+                  Sign out
                 </button>
               </>
             ) : (
               <>
-                <span className="navbar-text me-3">
-                  Welcome, {localStorage.getItem('vanny-user-name') || 'User'}
-                </span>
-                <button
-                  className="btn btn-light btn-sm"
-                  onClick={handleLogout}
-                >
-                  <i className="bi bi-box-arrow-right me-1"></i>
-                  Sign Out
-                </button>
+                <Link to="/auth/login" className="btn btn-outline-light btn-sm">
+                  <i className="bi bi-box-arrow-in-right me-1" />
+                  Login
+                </Link>
+                <Link to="/auth/register" className="btn btn-light btn-sm">
+                  <i className="bi bi-person-plus me-1" />
+                  Register
+                </Link>
               </>
             )}
           </div>

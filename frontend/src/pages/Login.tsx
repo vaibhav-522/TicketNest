@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
+import { useAuth } from '../hooks/useAuth';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [error, setError] = useState<string | null>(null);
 
   // Schema validation
@@ -21,28 +23,11 @@ const Login: React.FC = () => {
 
   const onSubmit = async (data: z.infer<typeof formSchema>) => {
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(data),
-        credentials: 'include', // Send cookies
-      });
-
-      if (res.ok) {
-        const result = await res.json();
-        // Store user info
-        localStorage.setItem('vanny-user-token', result.token || '');
-        localStorage.setItem('vanny-user-name', result.user?.name || '');
-        navigate('/shows');
-      } else {
-        const errorData = await res.json();
-        setError(errorData.message || 'Login failed');
-      }
+      await login(data.email, data.password);
+      navigate('/shows');
     } catch (error) {
       console.error('Login error:', error);
-      setError('An error occurred. Please try again.');
+      setError(error instanceof Error ? error.message : 'An error occurred. Please try again.');
     }
   };
 
@@ -98,7 +83,7 @@ const Login: React.FC = () => {
             </form>
 
             <p className="text-center mt-3 small">
-              Don't have an account? <a href="/auth/register" className="underline">Sign Up</a>
+              Don&apos;t have an account? <Link to="/auth/register">Sign up</Link>
             </p>
           </div>
         </div>

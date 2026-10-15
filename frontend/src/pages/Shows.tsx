@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 interface Show {
@@ -15,233 +15,194 @@ interface Show {
   image?: string;
 }
 
+const fallbackShows: Show[] = [
+  {
+    id: '1',
+    title: 'Avatar: The Way of Water',
+    theater: 'Grand Cinema Premium',
+    location: 'Downtown Theater',
+    time: new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString(),
+    price: 250,
+    category: 'Action',
+    availableSeats: 45,
+    totalSeats: 60,
+    rating: 8.7,
+  },
+  {
+    id: '2',
+    title: 'Pathaan',
+    theater: 'INOX Multiplex',
+    location: 'City Center',
+    time: new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString(),
+    price: 300,
+    category: 'Action',
+    availableSeats: 32,
+    totalSeats: 60,
+    rating: 7.5,
+  },
+  {
+    id: '3',
+    title: 'The Kashmir Files',
+    theater: 'PVR Cinemas',
+    location: 'MG Road',
+    time: new Date(Date.now() + 30 * 60 * 60 * 1000).toISOString(),
+    price: 200,
+    category: 'Drama',
+    availableSeats: 60,
+    totalSeats: 60,
+    rating: 6.8,
+  },
+  {
+    id: '4',
+    title: 'Top Gun: Maverick',
+    theater: 'IMAX Theatre',
+    location: 'Airport Center',
+    time: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+    price: 350,
+    category: 'Action',
+    availableSeats: 28,
+    totalSeats: 60,
+    rating: 8.3,
+  },
+];
+
+const currency = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  maximumFractionDigits: 0,
+});
+
 const Shows: React.FC = () => {
   const [shows, setShows] = useState<Show[]>([]);
-  const [filter, setFilter] = useState<{ category?: string; search?: string }>({});
+  const [category, setCategory] = useState('All');
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Fetch shows from backend
     const fetchShows = async () => {
       try {
-        const res = await fetch('/api/shows', {
-          credentials: 'include',
-        });
+        const res = await fetch('/api/shows', { credentials: 'include' });
         if (!res.ok) throw new Error('Failed to fetch shows');
         const data = await res.json();
-        setShows(data.shows || []);
+        setShows(Array.isArray(data.shows) && data.shows.length > 0 ? data.shows : fallbackShows);
       } catch (err) {
         console.error('Error fetching shows:', err);
-        // Fallback data if API fails
-        setShows([
-          {
-            id: '1',
-            title: 'Avatar: The Way of Water',
-            theater: 'Grand Cinema Premium',
-            location: 'Downtown Theater',
-            time: 'Today 5:00 PM',
-            price: 250,
-            category: 'Action',
-            availableSeats: 45,
-            totalSeats: 100,
-            rating: 8.7,
-            image: '/images/avatar.jpg',
-          },
-          {
-            id: '2',
-            title: 'Pathaan',
-            theater: 'INOX Multiplex',
-            location: 'City Center',
-            time: 'Today 7:30 PM',
-            price: 300,
-            category: 'Action',
-            availableSeats: 32,
-            totalSeats: 80,
-            rating: 7.5,
-            image: '/images/pathaan.jpg',
-          },
-          {
-            id: '3',
-            title: 'The Kashmir Files',
-            theater: 'PVR Cinemas',
-            location: 'MG Road',
-            time: 'Tomorrow 4:00 PM',
-            price: 200,
-            category: 'Drama',
-            availableSeats: 60,
-            totalSeats: 120,
-            rating: 6.8,
-            image: '/images/kashmir.jpg',
-          },
-          {
-            id: '4',
-            title: 'Top Gun: Maverick',
-            theater: 'IMAX Theatre',
-            location: 'Airport Center',
-            time: 'Tomorrow 6:00 PM',
-            price: 350,
-            category: 'Action',
-            availableSeats: 28,
-            totalSeats: 90,
-            rating: 8.3,
-            image: '/images/topgun.jpg',
-          },
-        ]);
+        setShows(fallbackShows);
+      } finally {
+        setLoading(false);
       }
     };
     fetchShows();
   }, []);
 
-  const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value;
-    if (value) {
-      setFilter({ category: value });
-    } else {
-      setFilter({});
-    }
-  };
+  const categories = useMemo(
+    () => ['All', ...Array.from(new Set(shows.map((show) => show.category).filter(Boolean)))],
+    [shows]
+  );
+
+  const visibleShows =
+    category === 'All' ? shows : shows.filter((show) => show.category === category);
 
   return (
     <section className="py-5">
-      <div className="container-fluid">
-        {/* Filters & Search Section */}
-        <div className="mb-4">
-          <nav>
-            <div className="nav-tabs" id="showsTabs" role="tablist">
+      <div className="container">
+        <div className="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+          <div>
+            <h1 className="h3 fw-bold mb-1">Now Showing</h1>
+            <p className="text-muted mb-0">Pick a show and reserve your seats in seconds.</p>
+          </div>
+          <div className="d-flex flex-wrap gap-2">
+            {categories.map((item) => (
               <button
-                className="nav-link active"
-                data-bs-toggle="tab"
-                data-bs-target="#all-shows"
-                aria-controls="all-shows"
-                role="tab"
+                key={item}
+                type="button"
+                className={`btn btn-sm ${item === category ? 'btn-primary' : 'btn-outline-secondary'}`}
+                onClick={() => setCategory(item)}
               >
-                All Shows
+                {item}
               </button>
-              <button
-                className="nav-link"
-                data-bs-toggle="tab"
-                data-bs-target="#action-shows"
-                aria-controls="action-shows"
-                role="tab"
-              >
-                Action <span className="badge bg-danger">new</span>
-              </button>
-              <button
-                className="nav-link"
-                data-bs-toggle="tab"
-                data-bs-target="#drama-shows"
-                aria-controls="drama-shows"
-                role="tab"
-              >
-                Drama
-              </button>
-              <button
-                className="nav-link"
-                data-bs-toggle="tab"
-                data-bs-target="#upcoming-shows"
-                aria-controls="upcoming-shows"
-                role="tab"
-              >
-                Upcoming
-              </button>
-            </div>
-          </nav>
+            ))}
+          </div>
         </div>
 
-        {/* Shows Grid */}
-        <div className="row g-4">
-          {shows.map((show) => (
-            <div
-              key={show.id}
-              className="col-xl-3 col-md-6 col-sm-6"
-            >
-              <div className="card h-100 border-0 shadow-sm overflow-hidden">
-                {/* Show Image */}
-                <div className="position-relative">
-                  {show.image ? (
-                    <img
-                      src show.image
-                      className="card-img-top"
-                      alt={show.title}
-                      style={{ height: 200, objectFit: 'cover' }}
-                    />
-                  ) : (
-                    <div
-                      className="card-img-top bg-secondary d-flex align-items-center justify-content-center"
-                      style={{ height: 200 }}
-                    >
-                      <span className="text-white small me-2">🎬</span>
-                      <span className="text-uppercase opacity-75">No Image</span>
-                    </div>
-                  )}
-                  {/* Badge if selling fast */}
-                  {show.availableSeats < 20 && (
-                    <span
-                      className="position-absolute top-2 start-2 bg-danger text-white rounded-pill px-3 py-1 small"
-                    >
-                      Low Stock
-                    </span>
-                  )}
-                </div>
-
-                {/* Show Details */}
-                <div className="card-body d-flex flex-column">
-                  <h5 className="card-title truncate">
-                    <Link to={`/booking/${show.id}`}>{show.title}</Link>
-                  </h5>
-                  
-                  <p className="card-text text-muted small mb-1">
-                    <i className="bi bi-calendar me-1"></i>{show.time}
-                  </p>
-                  <p className="card-text text-muted small mb-1">
-                    <i className="bi bi-building me-1"></i>{show.theater}
-                  </p>
-                  <p className="card-text text-muted small mb-1">
-                    <i className="bi bi-geo-alt me-1"></i>{show.location}
-                  </p>
-
-                  {/* Rating & Price */}
-                  <div className="mt-auto d-flex justify-content-between">
-                    {/* Rating */}
-                    <div className="d-flex align-items-center small">
-                      {[1, 2, 3, 4, 5].map((rating) => (
-                        <span
-                          key={rating}
-                          className={`
-                            text-warning me-1 
-                            ${rating <= (show.rating || 0) ? 'filled' : ''}
-                          `}
-                        >
-                          <i className="bi bi-star-fill"></i>
-                        </span>
-                      ))}
-                      <span className="ms-2 text-muted">
-                        {(show.rating || 0).toFixed(1)}
-                        ({((show.rating || 0) / 2).toFixed(0)} votes)
-                        </span>
-                      )
-                    </div>
-                    {/* Price */}
-                    <span className="text-primary fw-bold">
-                      ₹{show.price}
-                    </span>
+        {loading ? (
+          <div className="text-center py-5">
+            <div className="spinner-border text-primary" role="status">
+              <span className="visually-hidden">Loading shows...</span>
+            </div>
+          </div>
+        ) : visibleShows.length === 0 ? (
+          <div className="alert alert-info">No shows are available right now. Please check back soon.</div>
+        ) : (
+          <div className="row g-4">
+            {visibleShows.map((show) => (
+              <div key={show.id} className="col-xl-3 col-md-6">
+                <article className="card show-card shadow-sm">
+                  <div className="position-relative">
+                    {show.image ? (
+                      <img src={show.image} className="card-img-top" alt={show.title} />
+                    ) : (
+                      <div className="show-placeholder">
+                        <i className="bi bi-film" aria-hidden="true" />
+                      </div>
+                    )}
+                    {show.availableSeats < 20 && (
+                      <span className="badge bg-danger position-absolute top-0 start-0 m-2">
+                        Filling fast
+                      </span>
+                    )}
                   </div>
-                </div>
 
-                {/* Action Button */}
-                <button
-                  onClick={() => navigate(`/booking/${show.id}`)}
-                  className="btn btn-primary w-100 mt-2 text-white small"
-                  style={{ height: 'auto', padding: '8px 12px' }}
-                >
-                  Book Now
-                </button>
+                  <div className="card-body d-flex flex-column">
+                    <h5 className="card-title text-truncate mb-2">
+                      <Link to={`/booking/${show.id}`} className="text-dark">
+                        {show.title}
+                      </Link>
+                    </h5>
+
+                    <p className="card-text text-muted small mb-1">
+                      <i className="bi bi-calendar-event me-1" />
+                      {new Date(show.time).toLocaleString()}
+                    </p>
+                    <p className="card-text text-muted small mb-1">
+                      <i className="bi bi-building me-1" />
+                      {show.theater}
+                    </p>
+                    <p className="card-text text-muted small mb-1">
+                      <i className="bi bi-geo-alt me-1" />
+                      {show.location}
+                    </p>
+
+                    <div className="d-flex justify-content-between align-items-center mt-3">
+                      <span className="small text-muted">
+                        <i className="bi bi-people me-1" />
+                        {show.availableSeats} left
+                      </span>
+                      {show.rating != null && (
+                        <span className="small">
+                          <i className="bi bi-star-fill text-warning me-1" />
+                          {show.rating.toFixed(1)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="d-flex justify-content-between align-items-center mt-auto pt-3">
+                      <span className="fw-bold text-primary">{currency.format(show.price)}</span>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={() => navigate(`/booking/${show.id}`)}
+                        disabled={show.availableSeats === 0}
+                      >
+                        Book Now
+                      </button>
+                    </div>
+                  </div>
+                </article>
               </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Pagination or Load More would go here */}
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

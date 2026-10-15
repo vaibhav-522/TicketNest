@@ -1,144 +1,65 @@
-// VannyShow Database Seeder
-// Run: node seed.js
+import 'dotenv/config';
+import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose';
+import { Show, User } from './models.js';
 
-const mongoose = require('mongoose');
-const faker = require('faker'); // or use your own data
+const makeSeatList = (total) =>
+  Array.from(
+    { length: total },
+    (_, index) => `${String.fromCharCode(65 + Math.floor(index / 10))}${(index % 10) + 1}`
+  );
 
-async function seedDatabase() {
-  // Clear existing data
-  await mongoose.connection.db.dropDatabase();
-  console.log('Database cleared');
+const seed = async () => {
+  if (!process.env.MONGODB_URI) {
+    throw new Error('MONGODB_URI is required. Configure it in backend/.env.');
+  }
 
-  // Create categories
-  const categories = ['Action', 'Drama', 'Comedy', 'Thriller', 'Drama', 'Family', 'Documentary'];
+  await mongoose.connect(process.env.MONGODB_URI);
 
-  // Create users
-  const User = mongoose.model('User');
-  const users = await User.create([
-    {
-      name: 'Admin User',
-      email: 'admin@vannyshow.com',
-      password: 'admin123', // Will be hashed by pre-save hook
-      role: 'admin',
-      isVerified: true,
-    },
-    {
-      name: 'Premium User',
-      email: 'premium@vannyshow.com',
-      password: 'premium123',
-      role: 'user',
-      isVerified: true,
-    },
-    {
-      name: 'Regular User',
-      email: 'user@vannyshow.com',
-      password: 'user123',
-      role: 'user',
-      isVerified: true,
-    },
-  ]);
+  const demoUsers = [
+    ['Admin User', 'admin@ticketnest.local', 'admin123', 'admin'],
+    ['Sample User', 'user@ticketnest.local', 'user123', 'user'],
+  ];
+  for (const [name, email, password, role] of demoUsers) {
+    await User.updateOne(
+      { email },
+      { $setOnInsert: { name, email, password: await bcrypt.hash(password, 12), role } },
+      { upsert: true }
+    );
+  }
 
-  console.log(`Created ${users.length} users`);
+  if ((await Show.countDocuments()) === 0) {
+    const samples = [
+      ['Avatar: The Way of Water', 'Grand Cinema Premium', 'Downtown Theater', 250, 'Action', 8.7],
+      ['Pathaan', 'INOX Multiplex', 'City Center', 300, 'Action', 7.5],
+      ['The Kashmir Files', 'PVR Cinemas', 'MG Road', 200, 'Drama', 6.8],
+      ['Top Gun: Maverick', 'IMAX Theatre', 'Airport Center', 350, 'Action', 8.3],
+    ];
+    await Show.insertMany(
+      samples.map(([title, theater, location, price, category, rating], index) => ({
+        title,
+        theater,
+        location,
+        time: new Date(Date.now() + (index + 1) * 24 * 60 * 60 * 1000),
+        price,
+        totalSeats: 60,
+        availableSeats: makeSeatList(60),
+        category,
+        rating,
+      }))
+    );
+  }
 
-  // Create shows with realistic data
-  const Show = mongoose.model('Show');
-  const shows = await Show.create([
-    {
-      title: 'Avatar: The Way of Water',
-      theater: 'Grand Cinema Premium',
-      location: 'Downtown Theater Complex',
-      time: new Date('2024-01-15T17:00:00'),
-      price: 250,
-      totalSeats: 100,
-      category: 'Action',
-      rating: 8.7,
-      image: '/images/avatar.jpg',
-    },
-    {
-      title: 'Pathaan',
-      theater: 'INOX Multiplex',
-      location: 'City Center',
-      time: new Date('2024-01-15T19:30:00'),
-      price: 300,
-      totalSeats: 80,
-      category: 'Action',
-      rating: 7.5,
-      image: '/images/pathaan.jpg',
-    },
-    {
-      title: 'The Kashmir Files',
-      theater: 'PVR Cinemas',
-      location: 'MG Road',
-      time: new Date('2024-01-16T16:00:00'),
-      price: 200,
-      totalSeats: 120,
-      category: 'Drama',
-      rating: 6.8,
-      image: '/images/kashmir.jpg',
-    },
-    {
-      title: 'Top Gun: Maverick',
-      theater: 'IMAX Theatre',
-      location: 'Airport Center',
-      time: new Date('2024-01-16T18:30:00'),
-      price: 350,
-      totalSeats: 90,
-      category: 'Action',
-      rating: 8.3,
-      image: '/images/topgun.jpg',
-    },
-    {
-      title: 'RRR',
-      theater: 'PVR Cinemas',
-      location: 'Civil Lines',
-      time: new Date('2024-01-17T20:00:00'),
-      price: 280,
-      totalSeats: 70,
-      category: 'Action',
-      rating: 8.1,
-      image: '/images/rr.jpg',
-    },
-    {
-      title: 'Brahmastra',
-      theater: ' multiplex',
-      location: 'South City',
-      time: new Date('2024-01-18T17:00:00'),
-      price: 320,
-      totalSeats: 60,
-      category: 'Sci-Fi',
-      rating: 6.5,
-      image: '/images/brahmastra.jpg',
-    },
-    {
-      title: 'Gangubai Kathiawadi',
-      theater: 'NG Cinema',
-      location: 'Fort Area',
-      time: new Date('2024-01-18T20:00:00'),
-      price: 220,
-      totalSeats: 110,
-      category: 'Drama',
-      rating: 7.8,
-      image: '/images/gangubai.jpg',
-    },
-    {
-      title: 'The Ferryman',
-      theater: 'Prithvi Theatre',
-      location: 'Juhu',
-      time: new Date('2024-01-19T19:00:00'),
-      price: 180,
-      totalSeats: 50,
-      category: 'Drama',
-      rating: 9.0,
-      image: '/images/theater.jpg',
-    },
-  ]);
+  console.log('TicketNest seed data is ready.');
+  console.log('Demo admin: admin@ticketnest.local / admin123');
+  console.log('Demo user: user@ticketnest.local / user123');
+};
 
-  console.log(`Created ${shows.length} shows`);
-  console.log('Sample login credentials:');
-  console.log('Admin: admin@vannyshow.com / admin123');
-  console.log('User: user@vannyshow.com / user123');
-  console.log('Premium: premium@vannyshow.com / premium123');
-  process.exit();
-}
-
-seedDatabase();
+seed()
+  .catch((error) => {
+    console.error('TicketNest seeding failed:', error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await mongoose.disconnect();
+  });

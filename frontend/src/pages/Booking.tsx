@@ -1,8 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { z } from 'zod';
-import { useNavigate } from 'react-router-dom';
 
 interface Show {
   id: string;
@@ -16,247 +14,286 @@ interface Show {
   category: string;
 }
 
-// Schema for seat selection validation
+const SEATS_PER_ROW = 10;
+const MAX_SEATS = 8;
+
 const seatSelectionSchema = z.object({
-  seats: z.array(z.string()).min(1, 'Select at least one seat'),
+  seats: z
+    .array(z.string())
+    .min(1, 'Select at least one seat')
+    .max(MAX_SEATS, `You can book at most ${MAX_SEATS} seats`),
 });
 
-const SeatMap: React.FC = () => {
+const currency = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  maximumFractionDigits: 0,
+});
+
+const Booking: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [seats, setSeats] = useState<string[]>([]);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [show, setShow] = useState<Show | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [paymentIntent, setPaymentIntent] = useState<string | null>(null);
 
-  // Fetch show details from backend
+  const [show, setShow] = useState<Show | null>(null);
+  const [availableSeats, setAvailableSeats] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   useEffect(() => {
     const fetchShow = async () => {
       try {
-        const res = await fetch(`/api/shows/${id}`, {
-          credentials: 'include',
-        });
-        if (!res.ok) throw new Error('Show not found');
+        const res = await fetch(`/api/shows/${id}`, { credentials: 'include' });
+        if (!res.ok) throw new Error('This show is no longer available');
         const data = await res.json();
         setShow(data.show);
-        setSeats(data.availableSeats || []);
+        setAvailableSeats(Array.isArray(data.availableSeats) ? data.availableSeats : []);
       } catch (err) {
-        console.error('Error fetching show:', err);
+        setError(err instanceof Error ? err.message : 'Unable to load this show');
       } finally {
         setLoading(false);
       }
     };
-    fetchShow();
+    if (id) {
+      fetchShow();
+    } else {
+      setError('No show was specified');
+      setLoading(false);
+    }
   }, [id]);
 
-  useEffect(() => {
-    if (show && selected.length > 0) {
-      // Update price based on selected seats
-      const total = selected.length * show?.price || 0;
-      // Could update UI state here
-    }
-  }, [show, selected]);
+  const rowLabels = useMemo(() => {
+    const totalSeats = show?.totalSeats ?? 0;
+    const rowCount = Math.max(1, Math.ceil(totalSeats / SEATS_PER_ROW));
+    return Array.from({ length: rowCount }, (_, index) => String.fromCharCode(65 + index));
+  }, [show?.totalSeats]);
 
-  const handleSeatClick = (seatId: string) => {
-    if (selected.includes(seatId)) {
-      setSelected(selected.filter((s) => s !== seatId));
-    } else {
-      // Max 4 seats per booking for standard, 8 for premium
-      const maxSeats = selected.length >= 4 ? 8 : 4;
-      if (selected.length >= maxSeats) {
-        alert(`Maximum ${maxSeats} seats can be selected at once`);
-        return;
+  const toggleSeat = (seatId: string) => {
+    setSelected((current) => {
+      if (current.includes(seatId)) {
+        return current.filter((seat) => seat !== seatId);
       }
-      // Check if seat is available
-      if (show?.availableSeats.includes(seatId)) {
-        setSelected([...selected, seatId]);
+      if (current.length >= MAX_SEATS) {
+        alert(`You can select up to ${MAX_SEATS} seats per booking`);
+        return current;
       }
-    }
+      return [...current, seatId];
+    });
   };
 
+  const totalPrice = selected.length * (show?.price ?? 0);
+
   const proceedToPayment = async () => {
-    if (selected.length === 0) {
-      alert('Please select at least one seat');
+    const parsed = seatSelectionSchema.safeParse({ seats: selected });
+    if (!parsed.success) {
+      alert(parsed.error.errors[0].message);
       return;
     }
 
-    // Validate with Zod
-    const result = seatSelectionSchema.safeParse({ seats: selected });
-    if (!result.success) {
-      alert(result.error.errors[0].message);
-      return;
-    }
-
+    setSubmitting(true);
     try {
-      // Create payment intent
-      const res = await fetch('/api/payment/create-intent', {
+      // If Stripe is configured, create a PaymentIntent first. Otherwise continue without one.
+      let paymentId: string | undefined;
+      try {
+        const intentRes = await fetch('/api/payment/create-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ amount: totalPrice, currency: 'inr' }),
+        });
+        if (intentRes.ok) {
+          const intent = await intentRes.json();
+          paymentId = intent.id;
+        }
+      } catch {
+        // Payments are optional; booking can still be completed.
+      }
+
+      const res = await fetch('/api/bookings', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          amount: selected.length * (show?.price || 250),
-          currency: 'inr',
-        }),
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
+        body: JSON.stringify({ showId: id, seats: selected, paymentId }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        setPaymentIntent(data.clientSecret);
-        // In a real implementation, redirect to Stripe Checkout
-        // window.location.href = `/checkout?session_id=${data.id}`;
-        alert(`Booking confirmed!\nSeats: ${selected.join(', ')}\nTotal: ₹${selected.length * (show?.price || 250)}`);
-        navigate('/');
-      } else {
-        const errorData = await res.json();
-        alert('Booking failed: ' + (errorData.message || 'Unknown error'));
+      if (res.status === 401) {
+        alert('Please sign in to complete your booking.');
+        navigate('/auth/login');
+        return;
       }
-    } catch (error) {
-      console.error('Booking error:', error);
-      alert('An error occurred while booking. Please try again.');
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || 'Booking failed');
+      }
+
+      alert(`Booking confirmed!\nSeats: ${selected.join(', ')}\nTotal: ${currency.format(totalPrice)}`);
+      navigate('/shows');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Booking failed. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   if (loading) {
-    return <div>Loading show details...</div>;
+    return (
+      <div className="container py-5 text-center">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Loading show details...</span>
+        </div>
+      </div>
+    );
   }
 
-  if (!show) {
-    return <div>Show not found</div>;
+  if (error || !show) {
+    return (
+      <div className="container py-5">
+        <div className="alert alert-danger">{error || 'Show not found'}</div>
+        <Link to="/shows" className="btn btn-primary">
+          <i className="bi bi-arrow-left me-2" />
+          Back to shows
+        </Link>
+      </div>
+    );
   }
 
   return (
-    <div className="booking-page py-5">
-      <div className="container-fluid">
-        <nav aria-label="breadcrumb">
-          <ol className="breadcrumb">
-            <li className="breadcrumb-item"><Link to="/shows">Shows</Link></li>
-            <li className="breadcrumb-item active" aria-current="page">
-              Book Ticket
-            </li>
-          </ol>
-        </div>
+    <div className="booking-page container py-5">
+      <nav aria-label="breadcrumb">
+        <ol className="breadcrumb">
+          <li className="breadcrumb-item">
+            <Link to="/shows">Shows</Link>
+          </li>
+          <li className="breadcrumb-item active" aria-current="page">
+            Book Ticket
+          </li>
+        </ol>
+      </nav>
 
-        <div className="row mb-4">
-          <div className="col-md-8">
-            {/* Show Details Card */}
-            <div className="card shadow-sm">
-              <div className="card-body">
-                <h4 className="card-title">Select Your Seats</h4>
-                <p className="card-text">
-                  <strong>Show:</strong> {show?.title}
-                </p>
-                <p className="card-text">
-                  <strong>Theater:</strong> {show?.theater}
-                </p>
-                <p className="card-text">
-                  <strong>Location:</strong> {show?.location}
-                </p>
-                <p className="card-text">
-                  <strong>Show Time:</strong> {new Date(show?.time).toLocaleString()}
-                </p>
-                <p className="card-text">
-                  <strong>Price per seat:</strong> ₹{show?.price}
-                </p>
-                <p className="card-text">
-                  <strong>Available seats:</strong> {show?.availableSeats.length} of {show?.totalSeats}
-                </p>
-              </div>
+      <div className="row g-4 mb-4">
+        <div className="col-lg-8">
+          <div className="card shadow-sm h-100">
+            <div className="card-body">
+              <h1 className="h4 card-title mb-3">{show.title}</h1>
+              <ul className="list-unstyled mb-0">
+                <li className="mb-2">
+                  <i className="bi bi-building me-2 text-primary" />
+                  <strong>Theater:</strong> {show.theater}
+                </li>
+                <li className="mb-2">
+                  <i className="bi bi-geo-alt me-2 text-primary" />
+                  <strong>Location:</strong> {show.location}
+                </li>
+                <li className="mb-2">
+                  <i className="bi bi-calendar-event me-2 text-primary" />
+                  <strong>Show time:</strong> {new Date(show.time).toLocaleString()}
+                </li>
+                <li className="mb-2">
+                  <i className="bi bi-tag me-2 text-primary" />
+                  <strong>Price per seat:</strong> {currency.format(show.price)}
+                </li>
+                <li>
+                  <i className="bi bi-people me-2 text-primary" />
+                  <strong>Available seats:</strong> {availableSeats.length} of {show.totalSeats}
+                </li>
+              </ul>
             </div>
           </div>
+        </div>
 
-          <div className="col-md-4">
-            {/* Selected Seats Summary Card */}
-            <div className="card shadow-sm">
-              <div className="card-body">
-                <h5 className="card-title">Summary</h5>
-                {selected.length > 0 ? (
+        <div className="col-lg-4">
+          <div className="card shadow-sm h-100">
+            <div className="card-body d-flex flex-column">
+              <h2 className="h5 card-title">Your selection</h2>
+              {selected.length > 0 ? (
+                <>
+                  <p className="mb-1 small text-muted">
+                    <strong>{selected.length}</strong> seat{selected.length > 1 ? 's' : ''} selected
+                  </p>
+                  <p className="fw-bold text-primary">{currency.format(totalPrice)}</p>
+                  <p className="small mb-3">{selected.join(', ')}</p>
+                </>
+              ) : (
+                <p className="text-muted small mb-3">Select seats on the map to see your total.</p>
+              )}
+              <button
+                type="button"
+                className="btn btn-primary w-100 mt-auto"
+                onClick={proceedToPayment}
+                disabled={selected.length === 0 || submitting}
+              >
+                {submitting ? (
                   <>
-                    <p className="card-text small">
-                      <span className="fw-bold">Seats selected:</span> {selected.length}
-                    </p>
-                    <p className="card-text small">
-                      <span className="fw-bold">Total Price:</span> ₹{
-                        selected.length * (show?.price || 250)
-                      }
-                    </p>
-                    <button
-                      onClick={proceedToPayment}
-                      className="btn btn-primary w-100 mt-3"
-                      disabled={!show?.availableSeats || show?.availableSeats.length === 0}
-                    >
-                      {selected.length > 0 ? 'Proceed to Payment' : 'Select Seats'}
-                    </button>
+                    <span className="spinner-border spinner-border-sm me-2" role="status" />
+                    Processing...
                   </>
                 ) : (
-                  <p className="card-text small text-muted">
-                    Select seats to see summary
-                  </p>
+                  'Proceed to Payment'
                 )}
-              </div>
+              </button>
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Seat Map Section */}
-        {show && !loading && (
-          <div className="row justify-content-center">
-            <div className="col-12 col-lg-6">
-              <div className="text-center mb-4">
-                <h5>Seat Map</h5>
-                <p className="text-muted small">
-                  Click on available seats to select/deselect (Max 4 seats)
-                </p>
-              </div>
-              <div className="seat-container">
-                <div className="row seat-row mb-2" style={{ height: '20px' }}>
-                  {/* Row numbers */}
-                  <span className="col-1 seat-label fw-bold">.</span>
-                  {[1, 2, 3, 4, 5, 6].map((num) => (
-                    <span key={num} className="col-1 seat-label">
-                      {num}
-                    </span>
-                  ))}
-                </div>
-                {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'].map(
-                  (row, rowIndex) => (
-                    <div
-                      key={row}
-                      className="row seat-row mb-1"
-                      style={{ height: '20px' }}
-                    >
-                      <span className="col-1 seat-label fw-bold">
-                        {row}
-                      </span>
-                      {[1, 2, 3, 4, 5, 6].map((col) => {
-                        const seatId = `${row}${col}`;
-                        const isSelected = selected.includes(seatId);
-                        const isAvailable = show?.availableSeats.includes(seatId);
-                        return (
-                          <span
-                            key={seatId}
-                            className={`col-1 seat ${
-                              isSelected ? 'selected' : ''
-                            } ${isAvailable ? 'available' : 'unavailable'}`}
-                            onClick={isAvailable && handleSeatClick}
-                            title={seatId}
-                          >
-                            {seatId}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  )
+      <div className="card shadow-sm">
+        <div className="card-body">
+          <div className="text-center mb-3">
+            <h2 className="h5 mb-1">Choose your seats</h2>
+            <p className="text-muted small mb-0">
+              You can select up to {MAX_SEATS} seats. Grey seats are already taken.
+            </p>
+          </div>
+
+          <div className="seat-map">
+            {rowLabels.map((row) => (
+              <div className="seat-row" key={row}>
+                <span className="seat-row-label" style={{ width: 24, fontWeight: 700, alignSelf: 'center' }}>
+                  {row}
+                </span>
+                {Array.from({ length: SEATS_PER_ROW }, (_, index) => `${row}${index + 1}`).map(
+                  (seatId) => {
+                    const isAvailable = availableSeats.includes(seatId);
+                    const isSelected = selected.includes(seatId);
+                    const state = isSelected ? 'selected' : isAvailable ? 'available' : 'unavailable';
+                    return (
+                      <button
+                        key={seatId}
+                        type="button"
+                        className={`seat ${state}`}
+                        disabled={!isAvailable || submitting}
+                        onClick={() => toggleSeat(seatId)}
+                        title={seatId}
+                      >
+                        {seatId}
+                      </button>
+                    );
+                  }
                 )}
               </div>
-            </div>
+            ))}
           </div>
-        )}
+
+          <div className="d-flex justify-content-center flex-wrap gap-4 mt-3 small">
+            <span>
+              <span className="seat-legend" style={{ background: '#e6e9ee' }} />
+              Available
+            </span>
+            <span>
+              <span className="seat-legend" style={{ background: 'var(--ticketnest-accent)' }} />
+              Selected
+            </span>
+            <span>
+              <span className="seat-legend" style={{ background: '#aab3bd' }} />
+              Taken
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   );
 };
 
-export default SeatMap;
+export default Booking;

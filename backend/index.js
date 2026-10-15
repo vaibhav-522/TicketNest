@@ -68,6 +68,15 @@ const start = async () => {
   await mongoose.connect(process.env.MONGODB_URI);
   console.log('MongoDB connected for TicketNest');
 
+  // Populate the show catalog when deploying against a fresh database so the
+  // site is usable immediately. This never creates demo login accounts.
+  const { Show } = await import('./models.js');
+  if ((await Show.countDocuments()) === 0) {
+    const { seedShows } = await import('./seedData.js');
+    const inserted = await seedShows();
+    console.log(`Populated the empty show catalog with ${inserted} sample shows.`);
+  }
+
   const port = Number(process.env.PORT) || 5000;
   server.listen(port, () => {
     console.log(`TicketNest backend listening on http://localhost:${port}`);

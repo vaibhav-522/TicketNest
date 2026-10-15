@@ -7,7 +7,11 @@
     },
     "frontend": {
       "root": "frontend",
-      "framework": "vite"
+      "framework": "vite",
+      "routes": [
+        { "handle": "filesystem" },
+        { "src": "/(.*)", "dest": "/index.html" }
+      ]
     }
   },
   "rewrites": [

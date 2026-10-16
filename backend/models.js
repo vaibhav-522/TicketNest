@@ -35,7 +35,7 @@ const bookingSchema = new mongoose.Schema(
     totalPrice: { type: Number, required: true },
     status: { type: String, enum: ['pending', 'confirmed', 'cancelled'], default: 'confirmed' },
     paymentId: String,
-    stripeSessionId: { type: String, index: true, sparse: true },
+    paymentOrderId: { type: String, index: true, sparse: true },
     bookedAt: { type: Date, default: Date.now },
   },
   { timestamps: true }

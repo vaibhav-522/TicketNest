@@ -82,15 +82,6 @@ registerRoutes(app);
 
 app.use((err, _req, res, _next) => {
   console.error('TicketNest request failed:', err);
-
-  // Never leak Stripe internals or its auth status to the client.
-  if (typeof err?.type === 'string' && err.type.startsWith('Stripe')) {
-    return res.status(502).json({
-      success: false,
-      message: 'Payments are temporarily unavailable. Please try again in a moment.',
-    });
-  }
-
   res.status(err.statusCode || 500).json({
     success: false,
     message: err.statusCode ? err.message : 'Internal server error',

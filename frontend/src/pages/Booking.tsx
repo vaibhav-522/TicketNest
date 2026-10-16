@@ -30,6 +30,30 @@ const currency = new Intl.NumberFormat('en-IN', {
   maximumFractionDigits: 0,
 });
 
+interface RazorpayResponse {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+interface RazorpayCheckout {
+  keyId: string;
+  amount: number;
+  currency: string;
+  orderId: string;
+  seats: string[];
+  show?: { title?: string; theater?: string; location?: string };
+}
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: Record<string, unknown>) => {
+      open: () => void;
+      on: (event: string, handler: (payload: { error?: { description?: string } }) => void) => void;
+    };
+  }
+}
+
 const Booking: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -84,6 +108,64 @@ const Booking: React.FC = () => {
 
   const totalPrice = selected.length * (show?.price ?? 0);
 
+  const bookWithoutPayment = async () => {
+    const res = await fetch('/api/bookings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ showId: id, seats: selected }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.message || 'Booking failed');
+    }
+    navigate(`/payment/success?booking_id=${data.booking._id}`, { replace: true });
+  };
+
+  const openRazorpayCheckout = (checkout: RazorpayCheckout) =>
+    new Promise<void>((resolve, reject) => {
+      const RazorpayCtor = window.Razorpay;
+      if (!RazorpayCtor) {
+        reject(new Error('The payment library could not load. Please refresh and try again.'));
+        return;
+      }
+
+      const instance = new RazorpayCtor({
+        key: checkout.keyId,
+        amount: checkout.amount,
+        currency: checkout.currency,
+        name: 'TicketNest',
+        description: `${checkout.show?.title ?? 'Show'} • Seats ${checkout.seats.join(', ')}`,
+        order_id: checkout.orderId,
+        theme: { color: '#6d28d9' },
+        handler: async (response: RazorpayResponse) => {
+          try {
+            const res = await fetch('/api/payment/confirm', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify(response),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              throw new Error(data.message || 'We could not confirm your payment.');
+            }
+            navigate(`/payment/success?booking_id=${data.booking._id}`, { replace: true });
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        },
+        modal: { ondismiss: () => resolve() },
+      });
+
+      instance.on('payment.failed', (payload) => {
+        reject(new Error(payload?.error?.description || 'Payment failed. Please try again.'));
+      });
+
+      instance.open();
+    });
+
   const proceedToPayment = async () => {
     const parsed = seatSelectionSchema.safeParse({ seats: selected });
     if (!parsed.success) {
@@ -93,33 +175,7 @@ const Booking: React.FC = () => {
 
     setSubmitting(true);
     try {
-      // Preferred path: hand off to Stripe Checkout (real payment).
-      const checkoutRes = await fetch('/api/payment/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ showId: id, seats: selected }),
-      });
-
-      if (checkoutRes.status === 401) {
-        alert('Please sign in to complete your booking.');
-        navigate('/auth/login');
-        return;
-      }
-
-      // 503 = Stripe not configured. Fall back to a payment-less booking (local dev).
-      if (checkoutRes.status !== 503) {
-        const checkout = await checkoutRes.json();
-        if (!checkoutRes.ok) {
-          throw new Error(checkout.message || 'Could not start checkout');
-        }
-        if (checkout.url) {
-          window.location.href = checkout.url;
-          return;
-        }
-      }
-
-      const res = await fetch('/api/bookings', {
+      const res = await fetch('/api/payment/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -132,13 +188,18 @@ const Booking: React.FC = () => {
         return;
       }
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Booking failed');
+      // 503 = payments disabled (no Razorpay keys). Book without payment (local dev).
+      if (res.status === 503) {
+        await bookWithoutPayment();
+        return;
       }
 
-      alert(`Booking confirmed!\nSeats: ${selected.join(', ')}\nTotal: ${currency.format(totalPrice)}`);
-      navigate('/shows');
+      const checkout = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(checkout.message || 'Could not start checkout');
+      }
+
+      await openRazorpayCheckout(checkout as RazorpayCheckout);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Booking failed. Please try again.');
     } finally {

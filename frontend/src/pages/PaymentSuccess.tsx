@@ -5,6 +5,8 @@ interface Booking {
   _id: string;
   seats: string[];
   totalPrice: number;
+  paymentId?: string;
+  show?: { title?: string; theater?: string; location?: string; time?: string; price?: number };
 }
 
 const currency = new Intl.NumberFormat('en-IN', {
@@ -17,47 +19,42 @@ type Status = 'loading' | 'success' | 'error' | 'unauthenticated';
 
 const PaymentSuccess: React.FC = () => {
   const [params] = useSearchParams();
-  const sessionId = params.get('session_id');
+  const bookingId = params.get('booking_id');
   const [status, setStatus] = useState<Status>('loading');
   const [booking, setBooking] = useState<Booking | null>(null);
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    const confirm = async () => {
-      if (!sessionId) {
+    const fetchBooking = async () => {
+      if (!bookingId) {
         setStatus('error');
-        setMessage('The payment reference is missing from this link.');
+        setMessage('The booking reference is missing from this link.');
         return;
       }
 
       try {
-        const res = await fetch('/api/payment/confirm', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ sessionId }),
-        });
+        const res = await fetch(`/api/bookings/${bookingId}`, { credentials: 'include' });
 
         if (res.status === 401) {
           setStatus('unauthenticated');
           return;
         }
 
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          throw new Error(data.message || 'We could not confirm your payment.');
+          throw new Error(data.message || 'We could not load this booking.');
         }
 
-        setBooking(data.booking ?? null);
+        setBooking(data.booking);
         setStatus('success');
       } catch (err) {
         setStatus('error');
-        setMessage(err instanceof Error ? err.message : 'Confirmation failed.');
+        setMessage(err instanceof Error ? err.message : 'Something went wrong.');
       }
     };
 
-    confirm();
-  }, [sessionId]);
+    fetchBooking();
+  }, [bookingId]);
 
   return (
     <div className="container py-5">
@@ -68,8 +65,7 @@ const PaymentSuccess: React.FC = () => {
               {status === 'loading' && (
                 <>
                   <span className="spinner-border text-primary mb-3" role="status" />
-                  <h4>Confirming your payment…</h4>
-                  <p className="text-muted mb-0">This only takes a moment.</p>
+                  <h4>Loading your booking…</h4>
                 </>
               )}
 
@@ -80,6 +76,12 @@ const PaymentSuccess: React.FC = () => {
                   <p className="text-muted">Your tickets are booked. See you at the show!</p>
                   {booking && (
                     <ul className="list-group list-group-flush text-start my-3">
+                      {booking.show?.title && (
+                        <li className="list-group-item d-flex justify-content-between">
+                          <span>Show</span>
+                          <strong>{booking.show.title}</strong>
+                        </li>
+                      )}
                       <li className="list-group-item d-flex justify-content-between">
                         <span>Booking reference</span>
                         <strong>{booking._id}</strong>
@@ -103,10 +105,9 @@ const PaymentSuccess: React.FC = () => {
               {status === 'unauthenticated' && (
                 <>
                   <i className="bi bi-shield-lock text-warning display-4" />
-                  <h3 className="mt-3">Sign in to finish</h3>
+                  <h3 className="mt-3">Sign in to view your booking</h3>
                   <p className="text-muted">
-                    Your payment went through, but your session expired. Sign in again to attach the
-                    booking to your account.
+                    Your session expired. Sign in again to see this booking on your account.
                   </p>
                   <Link to="/auth/login" className="btn btn-primary">
                     Sign in
@@ -117,7 +118,7 @@ const PaymentSuccess: React.FC = () => {
               {status === 'error' && (
                 <>
                   <i className="bi bi-x-circle text-danger display-4" />
-                  <h3 className="mt-3">We couldn&apos;t confirm the booking</h3>
+                  <h3 className="mt-3">We couldn&apos;t load the booking</h3>
                   <p className="text-muted">{message}</p>
                   <Link to="/shows" className="btn btn-outline-primary">
                     Back to shows

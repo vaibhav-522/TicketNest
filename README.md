@@ -1,6 +1,6 @@
 # TicketNest
 
-TicketNest is a React/Vite frontend with an Express API, MongoDB persistence, JWT-cookie authentication, Socket.IO, and optional Stripe Checkout payments.
+TicketNest is a React/Vite frontend with an Express API, MongoDB persistence, JWT-cookie authentication, Socket.IO, and optional Razorpay payments.
 
 ## Project structure
 
@@ -24,7 +24,7 @@ TicketNest/
 
 - Node.js 18 or newer and npm 9 or newer
 - MongoDB running locally, or a MongoDB Atlas connection string
-- Stripe account and test secret key only if payment intents are needed
+- Razorpay account with test API keys only if payments are needed
 
 ## Run locally (Windows PowerShell)
 
@@ -54,11 +54,11 @@ npm run dev
 
 Open the URL Vite prints, usually `http://localhost:5173`. Vite proxies `/api` requests to the backend. `frontend/.env` contains the optional `VITE_API_URL` proxy target; leave it as `http://localhost:5000` for local development.
 
-To enable real payments, set `STRIPE_SECRET_KEY` in `backend/.env` to a Stripe secret key (`sk_test_...` for test mode). Bookings then go through hosted **Stripe Checkout**: the browser redirects to Stripe, and on return the backend verifies the payment server-side before reserving seats. If a seat is taken while paying, the charge is refunded automatically. Without `STRIPE_SECRET_KEY`, bookings complete without payment (handy for local development).
+To enable real payments, set `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` in `backend/.env` to your Razorpay test keys (`rzp_test_...`). Bookings then open **Razorpay Checkout** (UPI, cards, netbanking): the backend creates an order, Razorpay collects the payment, and the backend verifies the payment signature server-side before reserving seats. If a seat is taken while paying, the payment is refunded automatically. Without Razorpay keys, bookings complete without payment (handy for local development).
 
 ## Dependencies
 
-Backend runtime dependencies: Express, Mongoose, CORS, cookie-parser, dotenv, bcryptjs, jsonwebtoken, Socket.IO, and Stripe. Nodemon is used for backend development.
+Backend runtime dependencies: Express, Mongoose, CORS, cookie-parser, dotenv, bcryptjs, jsonwebtoken, and Socket.IO. Nodemon is used for backend development.
 
 Frontend runtime dependencies: React, React DOM, React Router, React Hook Form, Zod, Bootstrap, and Bootstrap Icons. Vite, its React plugin, TypeScript, and React type definitions are development dependencies.
 
@@ -73,8 +73,9 @@ Frontend runtime dependencies: React, React DOM, React Router, React Hook Form, 
 - `GET /api/shows/:id`
 - `POST /api/bookings` (authenticated)
 - `GET /api/bookings/user` (authenticated)
-- `POST /api/payment/checkout` (authenticated; creates a Stripe Checkout session)
-- `POST /api/payment/confirm` (authenticated; verifies payment and creates the booking)
+- `GET /api/bookings/:id` (authenticated; receipt for a single booking)
+- `POST /api/payment/checkout` (authenticated; creates a Razorpay order)
+- `POST /api/payment/confirm` (authenticated; verifies the payment signature and creates the booking)
 
 ## Deploy on Vercel (frontend + backend together)
 
@@ -86,7 +87,7 @@ This repository ships a `vercel.json` that uses [Vercel Services](https://vercel
    - `MONGODB_URI` – your MongoDB Atlas connection string.
    - `JWT_SECRET` – a long random string.
    - `CLIENT_URL` – your production URL, for example `https://your-app.vercel.app`.
-   - `STRIPE_SECRET_KEY` – optional; enables PaymentIntents.
+   - `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` – optional; enable real payments.
 4. Deploy. The backend is reachable at `/api` and the frontend at `/`.
 
 ## Deploy the backend on Railway instead

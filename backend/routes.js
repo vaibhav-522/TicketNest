@@ -1,7 +1,8 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import Stripe from 'stripe';
+import mongoose from 'mongoose';
 import { Booking, Show, User } from './models.js';
 
 const router = express.Router();
@@ -203,12 +204,79 @@ router.get(
   })
 );
 
-// Stripe is optional. When STRIPE_SECRET_KEY is set we run a real Checkout flow;
-// otherwise bookings fall back to the no-payment path used for local development.
-const stripeClient = () =>
-  process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+router.get(
+  '/bookings/:id',
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(404).json({ success: false, message: 'Booking not found' });
+    }
+    const booking = await Booking.findOne({
+      _id: req.params.id,
+      user: req.auth.userId,
+    }).populate('show', 'title theater location time price');
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found' });
+    }
+    return res.json({ success: true, booking });
+  })
+);
 
-const clientUrl = () => process.env.CLIENT_URL || 'http://localhost:5173';
+// Razorpay powers payments. When RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are set
+// the booking flow takes a real payment; otherwise it falls back to the
+// payment-less path used for local development.
+const razorpayConfigured = () =>
+  Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+
+const razorpayRequest = async (path, options = {}) => {
+  const auth = Buffer.from(
+    `${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`
+  ).toString('base64');
+
+  const response = await fetch(`https://api.razorpay.com/v1${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Basic ${auth}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(
+      data?.error?.description || 'The payment gateway rejected the request.'
+    );
+    error.statusCode = 502;
+    throw error;
+  }
+  return data;
+};
+
+const createRazorpayOrder = ({ amount, receipt, notes }) =>
+  razorpayRequest('/orders', {
+    method: 'POST',
+    body: JSON.stringify({ amount, currency: 'INR', receipt, notes }),
+  });
+
+const fetchRazorpayOrder = (orderId) => razorpayRequest(`/orders/${orderId}`);
+
+const refundRazorpayPayment = (paymentId) =>
+  razorpayRequest(`/payments/${paymentId}/refund`, { method: 'POST', body: '{}' });
+
+/**
+ * Verify a Razorpay Checkout signature. Razorpay signs the string
+ * "order_id|payment_id" with the key secret; our HMAC-SHA256 must match.
+ */
+const verifyRazorpaySignature = ({ orderId, paymentId, signature }) => {
+  const expected = crypto
+    .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+    .update(`${orderId}|${paymentId}`)
+    .digest('hex');
+  const provided = Buffer.from(String(signature || ''), 'utf8');
+  const wanted = Buffer.from(expected, 'utf8');
+  return provided.length === wanted.length && crypto.timingSafeEqual(provided, wanted);
+};
 
 const MAX_SEATS_PER_BOOKING = 8;
 
@@ -227,11 +295,10 @@ router.post(
   '/payment/checkout',
   requireAuth,
   asyncRoute(async (req, res) => {
-    const stripe = stripeClient();
-    if (!stripe) {
+    if (!razorpayConfigured()) {
       return res.status(503).json({
         success: false,
-        message: 'Payments are disabled. Configure STRIPE_SECRET_KEY to enable them.',
+        message: 'Payments are disabled. Configure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.',
       });
     }
 
@@ -254,31 +321,31 @@ router.post(
       });
     }
 
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      line_items: [
-        {
-          price_data: {
-            currency: 'inr',
-            product_data: {
-              name: `${show.title} — ${seats.length} seat${seats.length > 1 ? 's' : ''}`,
-              description: `${show.theater}, ${show.location} • Seats ${seats.join(', ')}`,
-            },
-            unit_amount: Math.round(show.price * 100),
-          },
-          quantity: seats.length,
-        },
-      ],
-      metadata: {
+    // Razorpay expects the amount in paise (₹1 = 100 paise).
+    const order = await createRazorpayOrder({
+      amount: seats.length * Math.round(show.price * 100),
+      receipt: `tn_${Date.now()}`,
+      notes: {
         userId: req.auth.userId,
         showId: show._id.toString(),
         seats: seats.join(','),
       },
-      success_url: `${clientUrl()}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${clientUrl()}/booking/${show._id.toString()}?canceled=1`,
     });
 
-    return res.json({ success: true, url: session.url, sessionId: session.id });
+    return res.json({
+      success: true,
+      keyId: process.env.RAZORPAY_KEY_ID,
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      seats,
+      show: {
+        id: show._id.toString(),
+        title: show.title,
+        theater: show.theater,
+        location: show.location,
+      },
+    });
   })
 );
 
@@ -286,36 +353,42 @@ router.post(
   '/payment/confirm',
   requireAuth,
   asyncRoute(async (req, res) => {
-    const stripe = stripeClient();
-    if (!stripe) {
+    if (!razorpayConfigured()) {
       return res.status(503).json({
         success: false,
-        message: 'Payments are disabled. Configure STRIPE_SECRET_KEY to enable them.',
+        message: 'Payments are disabled. Configure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.',
       });
     }
 
-    const { sessionId } = req.body;
-    if (!sessionId) {
-      return res.status(400).json({ success: false, message: 'A checkout session id is required' });
+    const {
+      razorpay_order_id: orderId,
+      razorpay_payment_id: paymentId,
+      razorpay_signature: signature,
+    } = req.body;
+
+    if (!orderId || !paymentId || !signature) {
+      return res.status(400).json({ success: false, message: 'Missing payment verification details.' });
     }
 
-    // Idempotent: the success page may be refreshed after the booking exists.
-    const existing = await Booking.findOne({ stripeSessionId: sessionId });
+    // The signature proves Razorpay processed this payment for this order.
+    if (!verifyRazorpaySignature({ orderId, paymentId, signature })) {
+      return res.status(400).json({ success: false, message: 'We could not verify this payment.' });
+    }
+
+    // Idempotent: Razorpay's handler can fire more than once.
+    const existing = await Booking.findOne({ paymentOrderId: orderId });
     if (existing) {
       return res.json({ success: true, booking: existing, alreadyConfirmed: true });
     }
 
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
-    if (session.payment_status !== 'paid') {
-      return res.status(402).json({ success: false, message: 'This payment has not completed yet.' });
-    }
-
-    const meta = session.metadata || {};
-    if (meta.userId !== req.auth.userId) {
+    // Read the seats and show back from the order we created (never trust the client).
+    const order = await fetchRazorpayOrder(orderId);
+    const notes = order.notes || {};
+    if (notes.userId !== req.auth.userId) {
       return res.status(403).json({ success: false, message: 'This payment belongs to another account.' });
     }
 
-    const seats = String(meta.seats || '')
+    const seats = String(notes.seats || '')
       .split(',')
       .map((seat) => seat.trim())
       .filter(Boolean);
@@ -324,19 +397,17 @@ router.post(
     }
 
     const reservedShow = await Show.findOneAndUpdate(
-      { _id: meta.showId, isActive: true, availableSeats: { $all: seats } },
+      { _id: notes.showId, isActive: true, availableSeats: { $all: seats } },
       { $pull: { availableSeats: { $in: seats } } },
       { new: true }
     );
 
     if (!reservedShow) {
-      // Someone else took the seats while the customer was paying: refund automatically.
+      // Seats were sold while the customer was paying: refund automatically.
       let refunded = false;
       try {
-        if (session.payment_intent) {
-          await stripe.refunds.create({ payment_intent: session.payment_intent });
-          refunded = true;
-        }
+        await refundRazorpayPayment(paymentId);
+        refunded = true;
       } catch (error) {
         console.error('Automatic refund failed:', error);
       }
@@ -353,9 +424,9 @@ router.post(
       show: reservedShow._id,
       seats,
       totalPrice: seats.length * reservedShow.price,
-      paymentId: session.payment_intent || session.id,
+      paymentId,
       status: 'confirmed',
-      stripeSessionId: sessionId,
+      paymentOrderId: orderId,
     });
 
     socketServer?.emit('booking-confirmed', {

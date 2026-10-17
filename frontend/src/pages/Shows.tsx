@@ -72,27 +72,55 @@ const currency = new Intl.NumberFormat('en-IN', {
   maximumFractionDigits: 0,
 });
 
+const dateFmt = new Intl.DateTimeFormat('en-IN', {
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
+const ShowCardSkeleton: React.FC = () => (
+  <div className="col-xl-3 col-md-6">
+    <div className="card show-card">
+      <div className="skeleton skeleton-media" />
+      <div className="card-body">
+        <div className="skeleton mb-2" style={{ height: 18, width: '80%' }} />
+        <div className="skeleton mb-2" style={{ height: 12, width: '60%' }} />
+        <div className="skeleton mb-2" style={{ height: 12, width: '70%' }} />
+        <div className="skeleton mt-3" style={{ height: 32, width: '100%' }} />
+      </div>
+    </div>
+  </div>
+);
+
 const Shows: React.FC = () => {
   const [shows, setShows] = useState<Show[]>([]);
   const [category, setCategory] = useState('All');
+  const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
+    let active = true;
     const fetchShows = async () => {
       try {
         const res = await fetch('/api/shows', { credentials: 'include' });
         if (!res.ok) throw new Error('Failed to fetch shows');
         const data = await res.json();
+        if (!active) return;
         setShows(Array.isArray(data.shows) && data.shows.length > 0 ? data.shows : fallbackShows);
       } catch (err) {
         console.error('Error fetching shows:', err);
-        setShows(fallbackShows);
+        if (active) setShows(fallbackShows);
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
-    fetchShows();
+    void fetchShows();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const categories = useMemo(
@@ -100,107 +128,186 @@ const Shows: React.FC = () => {
     [shows]
   );
 
-  const visibleShows =
-    category === 'All' ? shows : shows.filter((show) => show.category === category);
+  const visibleShows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return shows.filter((show) => {
+      const matchesCategory = category === 'All' || show.category === category;
+      const matchesQuery =
+        q.length === 0 ||
+        [show.title, show.theater, show.location].some((field) =>
+          String(field ?? '').toLowerCase().includes(q)
+        );
+      return matchesCategory && matchesQuery;
+    });
+  }, [shows, category, query]);
+
+  const resetFilters = () => {
+    setCategory('All');
+    setQuery('');
+  };
 
   return (
-    <section className="py-5">
+    <section className="section-tight">
       <div className="container">
-        <div className="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
-          <div>
-            <h1 className="h3 fw-bold mb-1">Now Showing</h1>
-            <p className="text-muted mb-0">Pick a show and reserve your seats in seconds.</p>
-          </div>
-          <div className="d-flex flex-wrap gap-2">
-            {categories.map((item) => (
-              <button
-                key={item}
-                type="button"
-                className={`btn btn-sm ${item === category ? 'btn-primary' : 'btn-outline-secondary'}`}
-                onClick={() => setCategory(item)}
+        <div className="mb-4">
+          <span className="eyebrow">Now showing</span>
+          <h1 className="display-6 fw-bold mt-2 mb-2">Pick your next show</h1>
+          <p className="text-muted-2 mb-0">Reserve your seats in seconds, pay securely, enjoy.</p>
+        </div>
+
+        <div className="panel panel-pad mb-4">
+          <div className="row g-3 align-items-center">
+            <div className="col-lg-5">
+              <label htmlFor="show-search" className="visually-hidden">
+                Search shows
+              </label>
+              <div className="input-group">
+                <span className="input-group-text" aria-hidden="true">
+                  <i className="bi bi-search" />
+                </span>
+                <input
+                  id="show-search"
+                  type="search"
+                  className="form-control"
+                  placeholder="Search by title, theater or location"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </div>
+            </div>
+            <div className="col-lg-7">
+              <div
+                className="d-flex flex-wrap gap-2 justify-content-lg-end"
+                role="group"
+                aria-label="Filter by category"
               >
-                {item}
-              </button>
-            ))}
+                {categories.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    className={`btn filter-chip${item === category ? ' is-on' : ''}`}
+                    aria-pressed={item === category}
+                    onClick={() => setCategory(item)}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
+        {!loading && (
+          <p className="small text-muted-2 mb-3" aria-live="polite">
+            {visibleShows.length} {visibleShows.length === 1 ? 'show' : 'shows'} available
+          </p>
+        )}
+
         {loading ? (
-          <div className="text-center py-5">
-            <div className="spinner-border text-primary" role="status">
-              <span className="visually-hidden">Loading shows...</span>
-            </div>
+          <div className="row g-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <ShowCardSkeleton key={index} />
+            ))}
           </div>
         ) : visibleShows.length === 0 ? (
-          <div className="alert alert-info">No shows are available right now. Please check back soon.</div>
+          <div className="panel panel-pad text-center py-5">
+            <i className="bi bi-search display-5 text-primary" aria-hidden="true" />
+            <h2 className="h5 mt-3 mb-2">No shows match your filters</h2>
+            <p className="text-muted-2 mb-4">Try a different search or clear the filters.</p>
+            <button type="button" className="btn btn-primary" onClick={resetFilters}>
+              Clear filters
+            </button>
+          </div>
         ) : (
           <div className="row g-4">
-            {visibleShows.map((show) => (
-              <div key={show.id} className="col-xl-3 col-md-6">
-                <article className="card show-card shadow-sm">
-                  <div className="position-relative">
-                    {show.image ? (
-                      <img src={show.image} className="card-img-top" alt={show.title} />
-                    ) : (
-                      <div className="show-placeholder">
-                        <i className="bi bi-film" aria-hidden="true" />
+            {visibleShows.map((show) => {
+              const soldOut = show.availableSeats === 0;
+              const fillingFast = show.availableSeats > 0 && show.availableSeats < 20;
+              const pct = show.totalSeats
+                ? Math.round((show.availableSeats / show.totalSeats) * 100)
+                : 0;
+
+              return (
+                <div key={show.id} className="col-xl-3 col-md-6">
+                  <article className="card show-card">
+                    <div className="show-media">
+                      {show.image ? (
+                        <img src={show.image} alt={show.title} loading="lazy" />
+                      ) : (
+                        <div className="show-placeholder">
+                          <i className="bi bi-film" aria-hidden="true" />
+                        </div>
+                      )}
+                      <div className="show-badges">
+                        <span className="pill pill-genre">{show.category}</span>
+                        {show.rating != null && (
+                          <span className="pill pill-rating">
+                            <i className="bi bi-star-fill" aria-hidden="true" />
+                            {show.rating.toFixed(1)}
+                          </span>
+                        )}
                       </div>
-                    )}
-                    {show.availableSeats < 20 && (
-                      <span className="badge bg-danger position-absolute top-0 start-0 m-2">
-                        Filling fast
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="card-body d-flex flex-column">
-                    <h5 className="card-title text-truncate mb-2">
-                      <Link to={`/booking/${show.id}`} className="text-dark">
-                        {show.title}
-                      </Link>
-                    </h5>
-
-                    <p className="card-text text-muted small mb-1">
-                      <i className="bi bi-calendar-event me-1" />
-                      {new Date(show.time).toLocaleString()}
-                    </p>
-                    <p className="card-text text-muted small mb-1">
-                      <i className="bi bi-building me-1" />
-                      {show.theater}
-                    </p>
-                    <p className="card-text text-muted small mb-1">
-                      <i className="bi bi-geo-alt me-1" />
-                      {show.location}
-                    </p>
-
-                    <div className="d-flex justify-content-between align-items-center mt-3">
-                      <span className="small text-muted">
-                        <i className="bi bi-people me-1" />
-                        {show.availableSeats} left
-                      </span>
-                      {show.rating != null && (
-                        <span className="small">
-                          <i className="bi bi-star-fill text-warning me-1" />
-                          {show.rating.toFixed(1)}
+                      {fillingFast && (
+                        <span className="pill pill-hot position-absolute" style={{ bottom: '0.7rem', left: '0.7rem' }}>
+                          <i className="bi bi-fire" aria-hidden="true" />
+                          Filling fast
                         </span>
                       )}
                     </div>
 
-                    <div className="d-flex justify-content-between align-items-center mt-auto pt-3">
-                      <span className="fw-bold text-primary">{currency.format(show.price)}</span>
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-sm"
-                        onClick={() => navigate(`/booking/${show.id}`)}
-                        disabled={show.availableSeats === 0}
-                      >
-                        Book Now
-                      </button>
+                    <div className="card-body d-flex flex-column">
+                      <h2 className="h6 mb-2">
+                        <Link to={`/booking/${show.id}`} className="show-title text-truncate">
+                          {show.title}
+                        </Link>
+                      </h2>
+
+                      <div className="meta-row">
+                        <i className="bi bi-calendar-event" aria-hidden="true" />
+                        <span>{dateFmt.format(new Date(show.time))}</span>
+                      </div>
+                      <div className="meta-row">
+                        <i className="bi bi-building" aria-hidden="true" />
+                        <span className="text-truncate">{show.theater}</span>
+                      </div>
+                      <div className="meta-row">
+                        <i className="bi bi-geo-alt" aria-hidden="true" />
+                        <span className="text-truncate">{show.location}</span>
+                      </div>
+
+                      <div className="mt-3">
+                        <div className="d-flex justify-content-between small text-muted-2 mb-1">
+                          <span>
+                            <i className="bi bi-people me-1" aria-hidden="true" />
+                            {show.availableSeats} of {show.totalSeats} seats left
+                          </span>
+                          <span>{pct}%</span>
+                        </div>
+                        <div className={`seat-meter${fillingFast ? ' is-low' : ''}`}>
+                          <span style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+
+                      <div className="d-flex justify-content-between align-items-center mt-auto pt-3">
+                        <div>
+                          <div className="price-tag">{currency.format(show.price)}</div>
+                          <small className="text-muted-2">per seat</small>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={() => navigate(`/booking/${show.id}`)}
+                          disabled={soldOut}
+                          aria-label={soldOut ? `${show.title} is sold out` : `Book ${show.title}`}
+                        >
+                          {soldOut ? 'Sold out' : 'Book now'}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </article>
-              </div>
-            ))}
+                  </article>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

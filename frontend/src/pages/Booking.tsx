@@ -30,6 +30,14 @@ const currency = new Intl.NumberFormat('en-IN', {
   maximumFractionDigits: 0,
 });
 
+const dateFmt = new Intl.DateTimeFormat('en-IN', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
 interface RazorpayResponse {
   razorpay_order_id: string;
   razorpay_payment_id: string;
@@ -54,6 +62,8 @@ declare global {
   }
 }
 
+type Notice = { type: 'danger' | 'info'; message: string } | null;
+
 const Booking: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -63,28 +73,38 @@ const Booking: React.FC = () => {
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice>(null);
 
   useEffect(() => {
+    let active = true;
     const fetchShow = async () => {
       try {
         const res = await fetch(`/api/shows/${id}`, { credentials: 'include' });
         if (!res.ok) throw new Error('This show is no longer available');
         const data = await res.json();
+        if (!active) return;
         setShow(data.show);
         setAvailableSeats(Array.isArray(data.availableSeats) ? data.availableSeats : []);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unable to load this show');
+        if (active) {
+          setNotice({
+            type: 'danger',
+            message: err instanceof Error ? err.message : 'Unable to load this show',
+          });
+        }
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
     if (id) {
-      fetchShow();
+      void fetchShow();
     } else {
-      setError('No show was specified');
+      setNotice({ type: 'danger', message: 'No show was specified' });
       setLoading(false);
     }
+    return () => {
+      active = false;
+    };
   }, [id]);
 
   const rowLabels = useMemo(() => {
@@ -94,12 +114,13 @@ const Booking: React.FC = () => {
   }, [show?.totalSeats]);
 
   const toggleSeat = (seatId: string) => {
+    setNotice(null);
     setSelected((current) => {
       if (current.includes(seatId)) {
         return current.filter((seat) => seat !== seatId);
       }
       if (current.length >= MAX_SEATS) {
-        alert(`You can select up to ${MAX_SEATS} seats per booking`);
+        setNotice({ type: 'info', message: `You can select up to ${MAX_SEATS} seats per booking.` });
         return current;
       }
       return [...current, seatId];
@@ -137,7 +158,7 @@ const Booking: React.FC = () => {
         name: 'TicketNest',
         description: `${checkout.show?.title ?? 'Show'} • Seats ${checkout.seats.join(', ')}`,
         order_id: checkout.orderId,
-        theme: { color: '#6d28d9' },
+        theme: { color: '#6d4ae0' },
         handler: async (response: RazorpayResponse) => {
           try {
             const res = await fetch('/api/payment/confirm', {
@@ -169,11 +190,12 @@ const Booking: React.FC = () => {
   const proceedToPayment = async () => {
     const parsed = seatSelectionSchema.safeParse({ seats: selected });
     if (!parsed.success) {
-      alert(parsed.error.errors[0].message);
+      setNotice({ type: 'danger', message: parsed.error.errors[0].message });
       return;
     }
 
     setSubmitting(true);
+    setNotice(null);
     try {
       const res = await fetch('/api/payment/checkout', {
         method: 'POST',
@@ -183,7 +205,7 @@ const Booking: React.FC = () => {
       });
 
       if (res.status === 401) {
-        alert('Please sign in to complete your booking.');
+        setNotice({ type: 'info', message: 'Please sign in to complete your booking.' });
         navigate('/auth/login');
         return;
       }
@@ -201,7 +223,10 @@ const Booking: React.FC = () => {
 
       await openRazorpayCheckout(checkout as RazorpayCheckout);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Booking failed. Please try again.');
+      setNotice({
+        type: 'danger',
+        message: err instanceof Error ? err.message : 'Booking failed. Please try again.',
+      });
     } finally {
       setSubmitting(false);
     }
@@ -209,20 +234,30 @@ const Booking: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="container py-5 text-center">
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Loading show details...</span>
+      <div className="container py-5">
+        <div className="skeleton mb-4" style={{ height: 22, width: 220 }} />
+        <div className="row g-4">
+          <div className="col-lg-8">
+            <div className="skeleton" style={{ height: 190 }} />
+          </div>
+          <div className="col-lg-4">
+            <div className="skeleton" style={{ height: 190 }} />
+          </div>
         </div>
+        <div className="skeleton mt-4" style={{ height: 340 }} />
       </div>
     );
   }
 
-  if (error || !show) {
+  if (!show) {
     return (
       <div className="container py-5">
-        <div className="alert alert-danger">{error || 'Show not found'}</div>
-        <Link to="/shows" className="btn btn-primary">
-          <i className="bi bi-arrow-left me-2" />
+        <div className="tn-alert tn-alert-danger" role="alert">
+          <i className="bi bi-exclamation-triangle-fill" aria-hidden="true" />
+          <span>{notice?.message || 'Show not found'}</span>
+        </div>
+        <Link to="/shows" className="btn btn-primary mt-3">
+          <i className="bi bi-arrow-left me-2" aria-hidden="true" />
           Back to shows
         </Link>
       </div>
@@ -230,137 +265,187 @@ const Booking: React.FC = () => {
   }
 
   return (
-    <div className="booking-page container py-5">
+    <div className="container py-4 py-lg-5">
       <nav aria-label="breadcrumb">
-        <ol className="breadcrumb">
+        <ol className="breadcrumb small">
           <li className="breadcrumb-item">
             <Link to="/shows">Shows</Link>
           </li>
           <li className="breadcrumb-item active" aria-current="page">
-            Book Ticket
+            Book seats
           </li>
         </ol>
       </nav>
 
-      <div className="row g-4 mb-4">
+      {notice && (
+        <div
+          className={`tn-alert ${notice.type === 'danger' ? 'tn-alert-danger' : 'tn-alert-info'} mb-4`}
+          role="alert"
+        >
+          <i
+            className={`bi ${
+              notice.type === 'danger' ? 'bi-exclamation-triangle-fill' : 'bi-info-circle-fill'
+            }`}
+            aria-hidden="true"
+          />
+          <span>{notice.message}</span>
+        </div>
+      )}
+
+      <div className="row g-4 align-items-start">
+        {/* Show details + seat map */}
         <div className="col-lg-8">
-          <div className="card shadow-sm h-100">
-            <div className="card-body">
-              <h1 className="h4 card-title mb-3">{show.title}</h1>
-              <ul className="list-unstyled mb-0">
-                <li className="mb-2">
-                  <i className="bi bi-building me-2 text-primary" />
-                  <strong>Theater:</strong> {show.theater}
-                </li>
-                <li className="mb-2">
-                  <i className="bi bi-geo-alt me-2 text-primary" />
-                  <strong>Location:</strong> {show.location}
-                </li>
-                <li className="mb-2">
-                  <i className="bi bi-calendar-event me-2 text-primary" />
-                  <strong>Show time:</strong> {new Date(show.time).toLocaleString()}
-                </li>
-                <li className="mb-2">
-                  <i className="bi bi-tag me-2 text-primary" />
-                  <strong>Price per seat:</strong> {currency.format(show.price)}
-                </li>
-                <li>
-                  <i className="bi bi-people me-2 text-primary" />
-                  <strong>Available seats:</strong> {availableSeats.length} of {show.totalSeats}
-                </li>
-              </ul>
+          <div className="panel panel-pad mb-4">
+            <div className="d-flex flex-wrap justify-content-between align-items-start gap-3">
+              <div>
+                <span className="eyebrow">{show.category}</span>
+                <h1 className="h3 fw-bold mt-2 mb-1">{show.title}</h1>
+                <p className="text-muted-2 mb-0">
+                  <i className="bi bi-building me-1" aria-hidden="true" />
+                  {show.theater} · {show.location}
+                </p>
+              </div>
+              <div className="text-lg-end">
+                <div className="price-tag">{currency.format(show.price)}</div>
+                <small className="text-muted-2">per seat</small>
+              </div>
+            </div>
+
+            <hr className="border-secondary my-3" />
+
+            <div className="row g-3 small">
+              <div className="col-sm-6">
+                <i className="bi bi-calendar-event me-2 text-primary" aria-hidden="true" />
+                <strong>Show time:</strong> {dateFmt.format(new Date(show.time))}
+              </div>
+              <div className="col-sm-6">
+                <i className="bi bi-people me-2 text-primary" aria-hidden="true" />
+                <strong>Available:</strong> {availableSeats.length} of {show.totalSeats} seats
+              </div>
+            </div>
+          </div>
+
+          <div className="panel panel-pad">
+            <div className="text-center mb-2">
+              <h2 className="h5 mb-1">Choose your seats</h2>
+              <p className="text-muted-2 small mb-0">
+                Select up to {MAX_SEATS} seats · <span className="text-muted-2">grey</span> seats are
+                already taken
+              </p>
+            </div>
+
+            <div className="screen-wrap" aria-hidden="true">
+              <div className="screen-bar" />
+              <span className="screen-label">Screen</span>
+            </div>
+
+            <div className="seat-map">
+              {rowLabels.map((row) => (
+                <div className="seat-row" key={row}>
+                  <span className="seat-row-label">{row}</span>
+                  {Array.from({ length: SEATS_PER_ROW }, (_, index) => `${row}${index + 1}`).map(
+                    (seatId) => {
+                      const isAvailable = availableSeats.includes(seatId);
+                      const isSelected = selected.includes(seatId);
+                      const state = isSelected ? 'selected' : isAvailable ? 'available' : 'unavailable';
+                      return (
+                        <button
+                          key={seatId}
+                          type="button"
+                          className={`seat ${state}`}
+                          disabled={!isAvailable || submitting}
+                          aria-pressed={isSelected}
+                          aria-label={`Seat ${seatId}${isSelected ? ', selected' : isAvailable ? ', available' : ', taken'}`}
+                          onClick={() => toggleSeat(seatId)}
+                        >
+                          {seatId}
+                        </button>
+                      );
+                    }
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="d-flex justify-content-center flex-wrap gap-4 mt-3 small">
+              <span>
+                <span className="seat-legend legend-available" aria-hidden="true" />
+                Available
+              </span>
+              <span>
+                <span className="seat-legend legend-selected" aria-hidden="true" />
+                Selected
+              </span>
+              <span>
+                <span className="seat-legend legend-taken" aria-hidden="true" />
+                Taken
+              </span>
             </div>
           </div>
         </div>
 
+        {/* Summary */}
         <div className="col-lg-4">
-          <div className="card shadow-sm h-100">
-            <div className="card-body d-flex flex-column">
-              <h2 className="h5 card-title">Your selection</h2>
-              {selected.length > 0 ? (
+          <div className="panel panel-pad summary-panel">
+            <h2 className="h5 mb-3">Your selection</h2>
+
+            {selected.length > 0 ? (
+              <>
+                <div className="d-flex flex-wrap gap-2 mb-3">
+                  {selected.map((seat) => (
+                    <span className="seat-token" key={seat}>
+                      {seat}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="summary-row">
+                  <span className="text-muted-2">
+                    {selected.length} seat{selected.length > 1 ? 's' : ''} ×{' '}
+                    {currency.format(show.price)}
+                  </span>
+                  <span>{currency.format(totalPrice)}</span>
+                </div>
+                <div className="summary-row">
+                  <span className="fw-semibold">Total</span>
+                  <span className="summary-total">{currency.format(totalPrice)}</span>
+                </div>
+              </>
+            ) : (
+              <p className="text-muted-2 small mb-3">
+                Tap seats on the map to see your total here.
+              </p>
+            )}
+
+            <button
+              type="button"
+              className="btn btn-accent w-100 mt-3"
+              onClick={proceedToPayment}
+              disabled={selected.length === 0 || submitting}
+            >
+              {submitting ? (
                 <>
-                  <p className="mb-1 small text-muted">
-                    <strong>{selected.length}</strong> seat{selected.length > 1 ? 's' : ''} selected
-                  </p>
-                  <p className="fw-bold text-primary">{currency.format(totalPrice)}</p>
-                  <p className="small mb-3">{selected.join(', ')}</p>
+                  <span className="spinner-border spinner-border-sm me-2" role="status" />
+                  Processing…
                 </>
               ) : (
-                <p className="text-muted small mb-3">Select seats on the map to see your total.</p>
+                <>
+                  <i className="bi bi-lock-fill me-2" aria-hidden="true" />
+                  Proceed to payment
+                </>
               )}
-              <button
-                type="button"
-                className="btn btn-primary w-100 mt-auto"
-                onClick={proceedToPayment}
-                disabled={selected.length === 0 || submitting}
-              >
-                {submitting ? (
-                  <>
-                    <span className="spinner-border spinner-border-sm me-2" role="status" />
-                    Processing...
-                  </>
-                ) : (
-                  'Proceed to Payment'
-                )}
-              </button>
-            </div>
+            </button>
+
+            <p className="text-muted-2 small text-center mb-0 mt-3">
+              <i className="bi bi-shield-check me-1" aria-hidden="true" />
+              Secure checkout · UPI &amp; cards
+            </p>
           </div>
         </div>
       </div>
 
-      <div className="card shadow-sm">
-        <div className="card-body">
-          <div className="text-center mb-3">
-            <h2 className="h5 mb-1">Choose your seats</h2>
-            <p className="text-muted small mb-0">
-              You can select up to {MAX_SEATS} seats. Grey seats are already taken.
-            </p>
-          </div>
-
-          <div className="seat-map">
-            {rowLabels.map((row) => (
-              <div className="seat-row" key={row}>
-                <span className="seat-row-label" style={{ width: 24, fontWeight: 700, alignSelf: 'center' }}>
-                  {row}
-                </span>
-                {Array.from({ length: SEATS_PER_ROW }, (_, index) => `${row}${index + 1}`).map(
-                  (seatId) => {
-                    const isAvailable = availableSeats.includes(seatId);
-                    const isSelected = selected.includes(seatId);
-                    const state = isSelected ? 'selected' : isAvailable ? 'available' : 'unavailable';
-                    return (
-                      <button
-                        key={seatId}
-                        type="button"
-                        className={`seat ${state}`}
-                        disabled={!isAvailable || submitting}
-                        onClick={() => toggleSeat(seatId)}
-                        title={seatId}
-                      >
-                        {seatId}
-                      </button>
-                    );
-                  }
-                )}
-              </div>
-            ))}
-          </div>
-
-          <div className="d-flex justify-content-center flex-wrap gap-4 mt-3 small">
-            <span>
-              <span className="seat-legend" style={{ background: '#e6e9ee' }} />
-              Available
-            </span>
-            <span>
-              <span className="seat-legend" style={{ background: 'var(--ticketnest-accent)' }} />
-              Selected
-            </span>
-            <span>
-              <span className="seat-legend" style={{ background: '#aab3bd' }} />
-              Taken
-            </span>
-          </div>
-        </div>
+      <div className="visually-hidden" aria-live="polite">
+        {selected.length} seats selected
       </div>
     </div>
   );

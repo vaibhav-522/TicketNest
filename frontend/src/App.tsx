@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
+import Footer from './components/Footer';
 import Home from './pages/Home';
 import Shows from './pages/Shows';
 import Booking from './pages/Booking';
@@ -30,9 +31,12 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell d-flex flex-column min-vh-100">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <Navbar />
-      <main className="app-main">
+      <main id="main" className="app-main flex-grow-1" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/shows" element={<Shows />} />
@@ -43,6 +47,7 @@ const App: React.FC = () => {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+      <Footer />
     </div>
   );
 };

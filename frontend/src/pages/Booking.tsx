@@ -445,7 +445,7 @@ const Booking: React.FC = () => {
       </div>
 
       <div className="visually-hidden" aria-live="polite">
-        {selected.length} seats selected
+        {selected.length > 0 ? `${selected.length} seats selected: ${selected.join(', ')}` : ''}
       </div>
     </div>
   );

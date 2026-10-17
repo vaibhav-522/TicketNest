@@ -35,7 +35,12 @@ const bookingSchema = new mongoose.Schema(
     totalPrice: { type: Number, required: true },
     status: { type: String, enum: ['pending', 'confirmed', 'cancelled'], default: 'confirmed' },
     paymentId: String,
-    paymentOrderId: { type: String, index: true, sparse: true },
+    // Named index: the earlier non-unique index would conflict on rebuild, and
+    // unique stops two confirms for one Razorpay order from booking twice.
+    paymentOrderId: {
+      type: String,
+      index: { unique: true, sparse: true, name: 'paymentOrderId_unique' },
+    },
     bookedAt: { type: Date, default: Date.now },
   },
   { timestamps: true }

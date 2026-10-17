@@ -10,6 +10,8 @@ let socketServer;
 const asyncRoute = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
 
+const MAX_SEATS_PER_BOOKING = 8;
+
 const publicUser = (user) => ({
   id: user._id,
   name: user.name,
@@ -129,6 +131,9 @@ router.get(
 router.get(
   '/shows/:id',
   asyncRoute(async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(404).json({ success: false, message: 'Show not found' });
+    }
     const show = await Show.findById(req.params.id).lean();
     if (!show || !show.isActive) {
       return res.status(404).json({ success: false, message: 'Show not found' });
@@ -145,9 +150,22 @@ router.post(
   '/bookings',
   requireAuth,
   asyncRoute(async (req, res) => {
+    // Once Razorpay is configured the money must actually change hands: this
+    // payment-less path exists for local development and keyless deployments,
+    // never as a way around checkout.
+    if (razorpayConfigured()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Payments are enabled. Complete checkout to book these seats.',
+      });
+    }
+
     const { showId, seats, paymentId } = req.body;
-    if (!Array.isArray(seats) || seats.length === 0 || seats.length > 8) {
-      return res.status(400).json({ success: false, message: 'Choose between 1 and 8 seats' });
+    if (!Array.isArray(seats) || seats.length === 0 || seats.length > MAX_SEATS_PER_BOOKING) {
+      return res.status(400).json({
+        success: false,
+        message: `Choose between 1 and ${MAX_SEATS_PER_BOOKING} seats`,
+      });
     }
 
     const show = await Show.findById(showId);
@@ -278,8 +296,6 @@ const verifyRazorpaySignature = ({ orderId, paymentId, signature }) => {
   return provided.length === wanted.length && crypto.timingSafeEqual(provided, wanted);
 };
 
-const MAX_SEATS_PER_BOOKING = 8;
-
 const parseSeats = (seats) => {
   if (!Array.isArray(seats) || seats.length === 0 || seats.length > MAX_SEATS_PER_BOOKING) {
     return { error: `Choose between 1 and ${MAX_SEATS_PER_BOOKING} seats` };
@@ -403,6 +419,13 @@ router.post(
     );
 
     if (!reservedShow) {
+      // A duplicate delivery of this payment may have booked these seats a
+      // moment ago: check before refunding so a live booking is never refunded.
+      const raced = await Booking.findOne({ paymentOrderId: orderId });
+      if (raced) {
+        return res.json({ success: true, booking: raced, alreadyConfirmed: true });
+      }
+
       // Seats were sold while the customer was paying: refund automatically.
       let refunded = false;
       try {
@@ -419,15 +442,40 @@ router.post(
       });
     }
 
-    const booking = await Booking.create({
-      user: req.auth.userId,
-      show: reservedShow._id,
-      seats,
-      totalPrice: seats.length * reservedShow.price,
-      paymentId,
-      status: 'confirmed',
-      paymentOrderId: orderId,
-    });
+    let booking;
+    try {
+      booking = await Booking.create({
+        user: req.auth.userId,
+        show: reservedShow._id,
+        seats,
+        totalPrice: seats.length * reservedShow.price,
+        paymentId,
+        status: 'confirmed',
+        paymentOrderId: orderId,
+      });
+    } catch (error) {
+      // The unique index on paymentOrderId rejected a duplicate: a concurrent
+      // confirm for this order already booked these same seats, so return it.
+      if (error?.code === 11000) {
+        const raced = await Booking.findOne({ paymentOrderId: orderId });
+        if (raced) {
+          return res.json({ success: true, booking: raced, alreadyConfirmed: true });
+        }
+      }
+
+      // Otherwise put the seats back and refund, so a failed write never leaves
+      // the customer paid up with no ticket while the seats stay locked.
+      await Show.updateOne(
+        { _id: reservedShow._id },
+        { $addToSet: { availableSeats: { $each: seats } } }
+      );
+      try {
+        await refundRazorpayPayment(paymentId);
+      } catch (refundError) {
+        console.error('Automatic refund failed after a booking error:', refundError);
+      }
+      throw error;
+    }
 
     socketServer?.emit('booking-confirmed', {
       bookingId: booking._id,

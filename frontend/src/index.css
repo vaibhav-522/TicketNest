@@ -601,6 +601,8 @@ a:hover {
 .pill-hot {
   background: rgba(248, 113, 113, 0.92);
   color: #2a0505;
+  /* Sits over the card's ::after scrim, which paints above unpositioned siblings. */
+  z-index: 2;
 }
 
 .pill-rating {
@@ -883,7 +885,7 @@ a:hover {
 }
 
 .form-control::placeholder {
-  color: #6b7280;
+  color: #8a93a5;
 }
 
 .form-control:focus {

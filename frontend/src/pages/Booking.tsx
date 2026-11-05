@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { io, type Socket } from 'socket.io-client';
 import { z } from 'zod';
 
 interface Show {
@@ -64,16 +65,48 @@ declare global {
 
 type Notice = { type: 'danger' | 'info'; message: string } | null;
 
+interface BookingConfirmedPayload {
+  showId: string;
+  seats: string[];
+  remainingSeats?: number;
+}
+
+/** Survives the redirect to /auth/login so seats are still chosen on return. */
+const storedSeatsKey = (showId?: string) => (showId ? `tn-seats:${showId}` : null);
+
+const readStoredSeats = (showId?: string): string[] => {
+  const key = storedSeatsKey(showId);
+  if (!key) return [];
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(key) || '[]');
+    return Array.isArray(parsed) ? parsed.filter((seat) => typeof seat === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
+/** Shared loader promise so rapid clicks inject checkout.js exactly once. */
+let razorpayLoader: Promise<void> | null = null;
+
 const Booking: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [show, setShow] = useState<Show | null>(null);
   const [availableSeats, setAvailableSeats] = useState<string[]>([]);
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>(() => readStoredSeats(id));
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
+  const [realtime, setRealtime] = useState(false);
+  const [live, setLive] = useState(false);
+
+  // Mirror the selection so the socket handler never reads a stale value.
+  const selectedRef = useRef(selected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
 
   useEffect(() => {
     let active = true;
@@ -84,7 +117,14 @@ const Booking: React.FC = () => {
         const data = await res.json();
         if (!active) return;
         setShow(data.show);
-        setAvailableSeats(Array.isArray(data.availableSeats) ? data.availableSeats : []);
+        const seats: string[] = Array.isArray(data.availableSeats) ? data.availableSeats : [];
+        setAvailableSeats(seats);
+        setRealtime(Boolean(data.realtime));
+        // Drop seats that were held in storage but are gone now.
+        setSelected((current) => {
+          const kept = current.filter((seat) => seats.includes(seat));
+          return kept.length === current.length ? current : kept;
+        });
       } catch (err) {
         if (active) {
           setNotice({
@@ -105,6 +145,96 @@ const Booking: React.FC = () => {
     return () => {
       active = false;
     };
+  }, [id]);
+
+  // Re-sync availability after any failed booking attempt: our view may have
+  // gone stale (socket unavailable, dropped event, paid flow conflict).
+  const refreshSeats = useCallback(async () => {
+    if (!id) return;
+    try {
+      const res = await fetch(`/api/shows/${id}`, { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const seats: string[] = Array.isArray(data.availableSeats) ? data.availableSeats : [];
+      setAvailableSeats(seats);
+      setSelected((current) => {
+        const kept = current.filter((seat) => seats.includes(seat));
+        return kept.length === current.length ? current : kept;
+      });
+    } catch {
+      /* Keep the current view; the server still rejects bad bookings. */
+    }
+  }, [id]);
+
+  // Live seat map: join this show's room and react to other people's bookings.
+  useEffect(() => {
+    if (!id || !realtime) return undefined;
+
+    let socket: Socket | null = null;
+    try {
+      socket = io({ reconnectionAttempts: 5 });
+    } catch {
+      return undefined; // Real-time unavailable — the seat map still works.
+    }
+
+    const handleBookingConfirmed = (payload: BookingConfirmedPayload) => {
+      if (!payload || String(payload.showId) !== id) return;
+      const taken = new Set(payload.seats || []);
+      if (taken.size === 0) return;
+
+      const affected = selectedRef.current.filter((seat) => taken.has(seat));
+      setSelected((current) => current.filter((seat) => !taken.has(seat)));
+      setAvailableSeats((current) => current.filter((seat) => !taken.has(seat)));
+      if (affected.length) {
+        setNotice({
+          type: 'info',
+          message: `${affected.join(', ')} ${
+            affected.length > 1 ? 'were' : 'was'
+          } just taken by another guest — your selection has been updated.`,
+        });
+      }
+    };
+
+    // Guards against StrictMode's double mount (and route changes): events
+    // from the outgoing socket must not touch state owned by the new one.
+    let active = true;
+
+    socket.on('connect', () => {
+      if (!active) return;
+      socket?.emit('join-show', id);
+      setLive(true);
+    });
+    socket.on('disconnect', () => {
+      if (active) setLive(false);
+    });
+    socket.on('connect_error', () => {
+      if (active) setLive(false);
+    });
+    socket.on('booking-confirmed', handleBookingConfirmed);
+
+    return () => {
+      active = false;
+      socket?.removeListener('booking-confirmed', handleBookingConfirmed);
+      socket?.emit('leave-show', id);
+      socket?.disconnect();
+      setLive(false);
+    };
+  }, [id, realtime]);
+
+  // Keep the selection across the login round-trip (and accidental reloads).
+  useEffect(() => {
+    const key = storedSeatsKey(id);
+    if (!key || loading) return;
+    try {
+      sessionStorage.setItem(key, JSON.stringify(selected));
+    } catch {
+      /* Storage may be unavailable (private mode); selection lives in state. */
+    }
+  }, [id, selected, loading]);
+
+  const clearStoredSeats = useCallback(() => {
+    const key = storedSeatsKey(id);
+    if (key) sessionStorage.removeItem(key);
   }, [id]);
 
   const rowLabels = useMemo(() => {
@@ -140,11 +270,36 @@ const Booking: React.FC = () => {
     if (!res.ok) {
       throw new Error(data.message || 'Booking failed');
     }
+    clearStoredSeats();
     navigate(`/payment/success?booking_id=${data.booking._id}`, { replace: true });
   };
 
-  const openRazorpayCheckout = (checkout: RazorpayCheckout) =>
-    new Promise<void>((resolve, reject) => {
+  /**
+   * Checkout.js is only needed once payments are actually in play, so it is
+   * injected here instead of render-blocking every page in index.html.
+   */
+  const loadRazorpay = () => {
+    if (window.Razorpay) return Promise.resolve();
+    if (!razorpayLoader) {
+      razorpayLoader = new Promise<void>((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        script.async = true;
+        script.onload = () => resolve();
+        script.onerror = () => {
+          script.remove();
+          razorpayLoader = null;
+          reject(new Error('The payment library could not load. Please refresh and try again.'));
+        };
+        document.head.appendChild(script);
+      });
+    }
+    return razorpayLoader;
+  };
+
+  const openRazorpayCheckout = async (checkout: RazorpayCheckout) => {
+    await loadRazorpay();
+    return new Promise<void>((resolve, reject) => {
       const RazorpayCtor = window.Razorpay;
       if (!RazorpayCtor) {
         reject(new Error('The payment library could not load. Please refresh and try again.'));
@@ -171,6 +326,7 @@ const Booking: React.FC = () => {
             if (!res.ok) {
               throw new Error(data.message || 'We could not confirm your payment.');
             }
+            clearStoredSeats();
             navigate(`/payment/success?booking_id=${data.booking._id}`, { replace: true });
             resolve();
           } catch (err) {
@@ -186,6 +342,7 @@ const Booking: React.FC = () => {
 
       instance.open();
     });
+  };
 
   const proceedToPayment = async () => {
     const parsed = seatSelectionSchema.safeParse({ seats: selected });
@@ -205,8 +362,8 @@ const Booking: React.FC = () => {
       });
 
       if (res.status === 401) {
-        setNotice({ type: 'info', message: 'Please sign in to complete your booking.' });
-        navigate('/auth/login');
+        // Carry the return path so the seat map is restored after signing in.
+        navigate('/auth/login', { state: { from: location } });
         return;
       }
 
@@ -227,6 +384,8 @@ const Booking: React.FC = () => {
         type: 'danger',
         message: err instanceof Error ? err.message : 'Booking failed. Please try again.',
       });
+      // Conflict (seats taken) or a transient failure: re-sync the seat map.
+      void refreshSeats();
     } finally {
       setSubmitting(false);
     }
@@ -331,6 +490,19 @@ const Booking: React.FC = () => {
               <p className="text-muted-2 small mb-0">
                 Select up to {MAX_SEATS} seats · <span className="text-muted-2">grey</span> seats are
                 already taken
+              </p>
+              <p className="small mb-0 mt-1" role="status">
+                {live ? (
+                  <span className="badge rounded-pill text-bg-success">
+                    <i className="bi bi-broadcast me-1" aria-hidden="true" />
+                    Live — seat availability updates in real time
+                  </span>
+                ) : (
+                  <span className="text-muted-2">
+                    <i className="bi bi-arrow-repeat me-1" aria-hidden="true" />
+                    Availability refreshes when your booking is submitted
+                  </span>
+                )}
               </p>
             </div>
 

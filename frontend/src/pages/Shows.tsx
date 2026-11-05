@@ -15,57 +15,6 @@ interface Show {
   image?: string;
 }
 
-const fallbackShows: Show[] = [
-  {
-    id: '1',
-    title: 'Avatar: The Way of Water',
-    theater: 'Grand Cinema Premium',
-    location: 'Downtown Theater',
-    time: new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString(),
-    price: 250,
-    category: 'Action',
-    availableSeats: 45,
-    totalSeats: 60,
-    rating: 8.7,
-  },
-  {
-    id: '2',
-    title: 'Pathaan',
-    theater: 'INOX Multiplex',
-    location: 'City Center',
-    time: new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString(),
-    price: 300,
-    category: 'Action',
-    availableSeats: 32,
-    totalSeats: 60,
-    rating: 7.5,
-  },
-  {
-    id: '3',
-    title: 'The Kashmir Files',
-    theater: 'PVR Cinemas',
-    location: 'MG Road',
-    time: new Date(Date.now() + 30 * 60 * 60 * 1000).toISOString(),
-    price: 200,
-    category: 'Drama',
-    availableSeats: 60,
-    totalSeats: 60,
-    rating: 6.8,
-  },
-  {
-    id: '4',
-    title: 'Top Gun: Maverick',
-    theater: 'IMAX Theatre',
-    location: 'Airport Center',
-    time: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
-    price: 350,
-    category: 'Action',
-    availableSeats: 28,
-    totalSeats: 60,
-    rating: 8.3,
-  },
-];
-
 const currency = new Intl.NumberFormat('en-IN', {
   style: 'currency',
   currency: 'INR',
@@ -99,20 +48,33 @@ const Shows: React.FC = () => {
   const [category, setCategory] = useState('All');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const navigate = useNavigate();
 
   useEffect(() => {
     let active = true;
     const fetchShows = async () => {
+      setLoading(true);
+      setError(null);
       try {
         const res = await fetch('/api/shows', { credentials: 'include' });
-        if (!res.ok) throw new Error('Failed to fetch shows');
-        const data = await res.json();
-        if (!active) return;
-        setShows(Array.isArray(data.shows) && data.shows.length > 0 ? data.shows : fallbackShows);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || 'The catalog could not be loaded.');
+        if (active) {
+          setShows(Array.isArray(data.shows) ? data.shows : []);
+        }
       } catch (err) {
+        // Never fall back to invented shows: a broken backend must be visible.
         console.error('Error fetching shows:', err);
-        if (active) setShows(fallbackShows);
+        if (active) {
+          setShows([]);
+          setError(
+            err instanceof Error && err.message
+              ? err.message
+              : 'We could not reach TicketNest. Please try again.'
+          );
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -121,7 +83,9 @@ const Shows: React.FC = () => {
     return () => {
       active = false;
     };
-  }, []);
+  }, [reloadKey]);
+
+  const retry = () => setReloadKey((key) => key + 1);
 
   const categories = useMemo(
     () => ['All', ...Array.from(new Set(shows.map((show) => show.category).filter(Boolean)))],
@@ -197,7 +161,7 @@ const Shows: React.FC = () => {
           </div>
         </div>
 
-        {!loading && (
+        {!loading && !error && (
           <p className="small text-muted-2 mb-3" aria-live="polite">
             {visibleShows.length} {visibleShows.length === 1 ? 'show' : 'shows'} available
           </p>
@@ -208,6 +172,28 @@ const Shows: React.FC = () => {
             {Array.from({ length: 4 }).map((_, index) => (
               <ShowCardSkeleton key={index} />
             ))}
+          </div>
+        ) : error ? (
+          <div className="panel panel-pad text-center py-5" role="alert">
+            <i className="bi bi-cloud-off display-5 text-danger" aria-hidden="true" />
+            <h2 className="h5 mt-3 mb-2">We couldn&apos;t load the show catalog</h2>
+            <p className="text-muted-2 mb-4">{error}</p>
+            <button type="button" className="btn btn-primary" onClick={retry}>
+              <i className="bi bi-arrow-clockwise me-2" aria-hidden="true" />
+              Try again
+            </button>
+          </div>
+        ) : shows.length === 0 ? (
+          <div className="panel panel-pad text-center py-5">
+            <i className="bi bi-calendar-x display-5 text-primary" aria-hidden="true" />
+            <h2 className="h5 mt-3 mb-2">No shows on the calendar yet</h2>
+            <p className="text-muted-2 mb-4">
+              New movies, concerts and live events will appear here as soon as they are added.
+            </p>
+            <button type="button" className="btn btn-primary" onClick={retry}>
+              <i className="bi bi-arrow-clockwise me-2" aria-hidden="true" />
+              Check again
+            </button>
           </div>
         ) : visibleShows.length === 0 ? (
           <div className="panel panel-pad text-center py-5">

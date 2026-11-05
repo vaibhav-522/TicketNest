@@ -97,3 +97,28 @@ If you prefer to host the backend separately (for example on [Railway](https://r
 1. Create a project from the repository and set the root directory to `backend`.
 2. Add the same environment variables as above, plus `PORT` (Railway provides one automatically).
 3. Once Railway gives you a public URL, point the frontend at it by adding a rewrite in `vercel.json` that sends `/api/(.*)` to `https://your-backend.up.railway.app/api/$1`, or set `VITE_API_URL` and call the backend with an absolute URL.
+
+> **Cookie caveat:** the session cookie is set with `SameSite=Lax`, which the browser
+> only sends on *same-site* requests. With the frontend on Vercel and the backend on
+> Railway, the two are different sites, so login and booking requests arrive
+> **without** the cookie and fail with a silent `401`. That is why the single-domain
+> Vercel `Services` layout above is the recommended deployment. To run the split
+> layout anyway, put both behind one custom domain (proxies/rewrites) or change the
+> cookie policy deliberately — do not discover it in production.
+
+## Real-time seat availability
+
+Standalone backends (local dev, Railway, any classic Node host) attach Socket.IO:
+clients join a room per show and receive `booking-confirmed` the moment anyone
+books, so the seat map drops taken seats immediately. Serverless (Vercel) has no
+socket server, so `GET /api/shows/:id` reports `realtime: false` and the frontend
+skips the socket entirely — availability then refreshes on submit and after any
+booking conflict. Booking attempts are always authoritative server-side either way.
+
+## Rate limiting
+
+`POST /api/auth/login` allows 10 failed attempts per 15 minutes per IP and
+`POST /api/auth/register` 20 per hour (successful requests do not consume the
+budget). Behind a proxy the app sets `trust proxy` when `VERCEL` or `RAILWAY` is
+set, so limits key on the real client IP. When deploying behind any other proxy,
+set the `trust proxy` hop count yourself or every client shares one budget.

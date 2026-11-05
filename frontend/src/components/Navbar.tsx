@@ -7,6 +7,11 @@ const navItems = [
   { to: '/shows', label: 'Shows', icon: 'bi-cinema', end: false },
 ];
 
+// Only meaningful once signed in (it 401s → redirects to login otherwise).
+const signedInNavItems = [
+  { to: '/bookings', label: 'My bookings', icon: 'bi-journal-check', end: false },
+];
+
 const Navbar: React.FC = () => {
   const { user, isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
@@ -50,7 +55,7 @@ const Navbar: React.FC = () => {
 
         <div className={`collapse navbar-collapse${isOpen ? ' show' : ''}`} id="tn-nav">
           <ul className="navbar-nav me-auto mb-2 mb-lg-0 ms-lg-3 gap-lg-1">
-            {navItems.map((item) => (
+            {(isAuthenticated ? [...navItems, ...signedInNavItems] : navItems).map((item) => (
               <li className="nav-item" key={item.to}>
                 <NavLink to={item.to} end={item.end} className="nav-link">
                   <i className={`bi ${item.icon} me-2`} aria-hidden="true" />

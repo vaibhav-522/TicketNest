@@ -74,6 +74,8 @@ body,
 
 html {
   scroll-behavior: smooth;
+  /* Keep focused targets clear of the fixed navbar (WCAG 2.2 Focus Not Obscured). */
+  scroll-padding-top: calc(var(--tn-nav-h) + 0.75rem);
 }
 
 body {

@@ -6,9 +6,11 @@ import Home from './pages/Home';
 import Shows from './pages/Shows';
 import Booking from './pages/Booking';
 import PaymentSuccess from './pages/PaymentSuccess';
+import MyBookings, { BookingDetails } from './pages/MyBookings';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import { useAuth } from './hooks/useAuth';
+import { safeReturnPath } from './utils/navigation';
 
 const App: React.FC = () => {
   const { isAuthenticated, loading } = useAuth();
@@ -27,7 +29,8 @@ const App: React.FC = () => {
   const isAuthRoute = location.pathname.startsWith('/auth');
 
   if (isAuthenticated && isAuthRoute) {
-    return <Navigate to="/shows" replace />;
+    // Send the user where they were originally heading (e.g. back to a seat map).
+    return <Navigate to={safeReturnPath(location.state)} replace />;
   }
 
   return (
@@ -42,6 +45,8 @@ const App: React.FC = () => {
           <Route path="/shows" element={<Shows />} />
           <Route path="/booking/:id" element={<Booking />} />
           <Route path="/payment/success" element={<PaymentSuccess />} />
+          <Route path="/bookings" element={<MyBookings />} />
+          <Route path="/bookings/:id" element={<BookingDetails />} />
           <Route path="/auth/login" element={<Login />} />
           <Route path="/auth/register" element={<Register />} />
           <Route path="*" element={<Navigate to="/" replace />} />

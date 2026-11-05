@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { useAuth } from '../hooks/useAuth';
+import { safeReturnPath } from '../utils/navigation';
 
 const Register: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -22,22 +24,36 @@ const Register: React.FC = () => {
   const {
     register,
     handleSubmit,
+    setError: setFieldError,
     formState: { errors, isSubmitting },
   } = useForm<z.infer<typeof formSchema>>();
 
   const onSubmit = async (data: z.infer<typeof formSchema>) => {
     setError(null);
+
+    // Run the Zod schema for real: its messages are what the user sees.
+    const parsed = formSchema.safeParse(data);
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        setFieldError(issue.path[0] as 'name' | 'email' | 'password', {
+          type: 'zod',
+          message: issue.message,
+        });
+      }
+      return;
+    }
+
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify(parsed.data),
         credentials: 'include',
       });
 
       if (res.ok) {
-        await login(data.email, data.password);
-        navigate('/shows');
+        await login(parsed.data.email, parsed.data.password);
+        navigate(safeReturnPath(location.state), { replace: true });
       } else {
         const errorData = await res.json().catch(() => ({}));
         setError(errorData.message || 'Registration failed. Please try again.');
@@ -176,7 +192,10 @@ const Register: React.FC = () => {
         </form>
 
         <p className="text-center mt-4 mb-0 small text-muted-2">
-          Already have an account? <Link to="/auth/login">Sign in</Link>
+          Already have an account?{' '}
+          <Link to="/auth/login" state={location.state}>
+            Sign in
+          </Link>
         </p>
       </div>
     </div>

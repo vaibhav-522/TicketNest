@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { useAuth } from '../hooks/useAuth';
+import { safeReturnPath } from '../utils/navigation';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -18,14 +20,29 @@ const Login: React.FC = () => {
   const {
     register,
     handleSubmit,
+    setError: setFieldError,
     formState: { errors, isSubmitting },
   } = useForm<z.infer<typeof formSchema>>();
 
   const onSubmit = async (data: z.infer<typeof formSchema>) => {
     setError(null);
+
+    // Run the Zod schema for real: its messages are what the user sees.
+    const parsed = formSchema.safeParse(data);
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        setFieldError(issue.path[0] as 'email' | 'password', {
+          type: 'zod',
+          message: issue.message,
+        });
+      }
+      return;
+    }
+
     try {
-      await login(data.email, data.password);
-      navigate('/shows');
+      await login(parsed.data.email, parsed.data.password);
+      // Back to the seat map / page the user was bounced from.
+      navigate(safeReturnPath(location.state), { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred. Please try again.');
     }
@@ -92,7 +109,7 @@ const Login: React.FC = () => {
                 className={`form-control${errors.password ? ' is-invalid' : ''}`}
                 placeholder="Your password"
                 aria-invalid={errors.password ? 'true' : 'false'}
-                aria-describedby={errors.password ? 'password-error' : undefined}
+                aria-describedby={errors.password ? 'password-error' : 'password-help'}
                 {...register('password', { required: 'Password is required' })}
               />
               <button
@@ -105,10 +122,14 @@ const Login: React.FC = () => {
                 <i className={`bi ${showPassword ? 'bi-eye-slash' : 'bi-eye'}`} aria-hidden="true" />
               </button>
             </div>
-            {errors.password && (
+            {errors.password ? (
               <p className="field-error mb-0" id="password-error">
                 <i className="bi bi-exclamation-circle" aria-hidden="true" />
                 {errors.password.message}
+              </p>
+            ) : (
+              <p className="text-muted-2 small mb-0 mt-1" id="password-help">
+                At least 6 characters.
               </p>
             )}
           </div>
@@ -129,7 +150,10 @@ const Login: React.FC = () => {
         </form>
 
         <p className="text-center mt-4 mb-0 small text-muted-2">
-          Don&apos;t have an account? <Link to="/auth/register">Create one</Link>
+          Don&apos;t have an account?{' '}
+          <Link to="/auth/register" state={location.state}>
+            Create one
+          </Link>
         </p>
       </div>
     </div>

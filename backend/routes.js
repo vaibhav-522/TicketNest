@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import { Booking, Show, User } from './models.js';
@@ -11,6 +12,32 @@ const asyncRoute = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
 
 const MAX_SEATS_PER_BOOKING = 8;
+
+/**
+ * bcrypt cost 12 makes every auth attempt deliberately slow, so an unbounded
+ * login endpoint is both a brute-force surface and a cheap CPU-exhaustion
+ * vector. Counting only failed attempts keeps one unlucky user (or one office
+ * behind a shared NAT) from locking everyone else out.
+ */
+const failedAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { success: false, message: 'Too many attempts. Please wait a few minutes and try again.' },
+});
+
+// Registration hashes the password too, so it gets its own, wider budget.
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { success: false, message: 'Too many accounts created from this address. Please try again later.' },
+});
+
 
 const publicUser = (user) => ({
   id: user._id,
@@ -48,6 +75,7 @@ const requireAuth = (req, res, next) => {
 
 router.post(
   '/auth/register',
+  registerLimiter,
   asyncRoute(async (req, res) => {
     const { name, email, password } = req.body;
     if (!name?.trim() || !email?.trim() || !password) {
@@ -58,15 +86,25 @@ router.post(
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    // The exists() check keeps the common case friendly; the E11000 catch
+    // covers two requests racing past it at the same time (unique index).
     if (await User.exists({ email: normalizedEmail })) {
       return res.status(409).json({ success: false, message: 'Email is already registered' });
     }
 
-    const user = await User.create({
-      name: name.trim(),
-      email: normalizedEmail,
-      password: await bcrypt.hash(password, 12),
-    });
+    let user;
+    try {
+      user = await User.create({
+        name: name.trim(),
+        email: normalizedEmail,
+        password: await bcrypt.hash(password, 12),
+      });
+    } catch (error) {
+      if (error?.code === 11000) {
+        return res.status(409).json({ success: false, message: 'Email is already registered' });
+      }
+      throw error;
+    }
     const token = issueToken(user);
     setAuthCookie(res, token);
     return res.status(201).json({ success: true, user: publicUser(user), token });
@@ -75,6 +113,7 @@ router.post(
 
 router.post(
   '/auth/login',
+  failedAuthLimiter,
   asyncRoute(async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -142,6 +181,10 @@ router.get(
       success: true,
       show: { ...show, id: show._id.toString() },
       availableSeats: show.availableSeats,
+      // Only true when a Socket.IO server is attached (standalone mode). On
+      // Vercel there is none, so the client skips real-time updates entirely
+      // instead of attempting handshakes that can never succeed.
+      realtime: Boolean(socketServer),
     });
   })
 );
@@ -201,7 +244,9 @@ router.post(
       );
       throw error;
     }
-    socketServer?.emit('booking-confirmed', {
+    // Room-scoped: only browsers viewing this show hear about it, and the
+    // join-show/leave-show handlers in index.js make the room meaningful.
+    socketServer?.to(String(reservedShow._id)).emit('booking-confirmed', {
       bookingId: booking._id,
       showId: reservedShow._id,
       seats,
@@ -216,7 +261,7 @@ router.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     const bookings = await Booking.find({ user: req.auth.userId })
-      .populate('show', 'title theater time')
+      .populate('show', 'title theater location time price')
       .sort({ bookedAt: -1 });
     return res.json({ success: true, bookings });
   })
@@ -477,7 +522,7 @@ router.post(
       throw error;
     }
 
-    socketServer?.emit('booking-confirmed', {
+    socketServer?.to(String(reservedShow._id)).emit('booking-confirmed', {
       bookingId: booking._id,
       showId: reservedShow._id,
       seats,

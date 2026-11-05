@@ -11,6 +11,12 @@ const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
 
 const app = express();
 
+// Behind a proxy (Vercel, Railway) trust exactly one hop so req.ip — and the
+// auth rate limiters keyed on it — see the real client instead of the platform.
+if (process.env.VERCEL || process.env.RAILWAY) {
+  app.set('trust proxy', 1);
+}
+
 app.use(
   cors({
     origin: clientUrl,

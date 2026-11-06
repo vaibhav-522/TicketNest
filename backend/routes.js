@@ -4,6 +4,7 @@ import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
+import { requireApiKey } from './apiKeys.js';
 import { Booking, Show, User } from './models.js';
 
 const router = express.Router();
@@ -72,6 +73,13 @@ const requireAuth = (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Invalid or expired session' });
   }
 };
+
+/**
+ * Same rules as requireAuth, but only when credentials were actually sent —
+ * used by the tickets read route, where a key-only scanner has no session.
+ */
+const authIfPresent = (req, res, next) =>
+  req.cookies.token || req.headers.authorization ? requireAuth(req, res, next) : next();
 
 router.post(
   '/auth/register',
@@ -154,6 +162,7 @@ router.post('/auth/logout', (_req, res) => {
 
 router.get(
   '/shows',
+  requireApiKey('shows'),
   asyncRoute(async (_req, res) => {
     const shows = await Show.find({ isActive: true }).sort({ time: 1 }).lean();
     return res.json({
@@ -169,6 +178,7 @@ router.get(
 
 router.get(
   '/shows/:id',
+  requireApiKey('shows'),
   asyncRoute(async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(404).json({ success: false, message: 'Show not found' });
@@ -191,6 +201,7 @@ router.get(
 
 router.post(
   '/bookings',
+  requireApiKey('bookings'),
   requireAuth,
   asyncRoute(async (req, res) => {
     // Once Razorpay is configured the money must actually change hands: this
@@ -258,6 +269,7 @@ router.post(
 
 router.get(
   '/bookings/user',
+  requireApiKey('bookings'),
   requireAuth,
   asyncRoute(async (req, res) => {
     const bookings = await Booking.find({ user: req.auth.userId })
@@ -269,6 +281,7 @@ router.get(
 
 router.get(
   '/bookings/:id',
+  requireApiKey('bookings'),
   requireAuth,
   asyncRoute(async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) {
@@ -282,6 +295,68 @@ router.get(
       return res.status(404).json({ success: false, message: 'Booking not found' });
     }
     return res.json({ success: true, booking });
+  })
+);
+
+/**
+ * Tickets — integration-only surface for e-tickets (partner apps, door
+ * scanners). Always requires TICKETS_API_KEY (503 when unset); the SPA never
+ * calls these routes, it reads its receipts through /api/bookings.
+ */
+const publicTicket = (booking) => ({
+  id: booking._id,
+  status: booking.status,
+  // What a scanner actually needs to answer "may this person enter?".
+  valid: booking.status === 'confirmed',
+  seats: booking.seats,
+  totalPrice: booking.totalPrice,
+  paid: Boolean(booking.paymentId),
+  bookedAt: booking.bookedAt,
+  show: booking.show
+    ? {
+        id: booking.show._id,
+        title: booking.show.title,
+        theater: booking.show.theater,
+        location: booking.show.location,
+        time: booking.show.time,
+      }
+    : null,
+});
+
+router.get(
+  '/tickets',
+  requireApiKey('tickets', { strict: true }),
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const bookings = await Booking.find({ user: req.auth.userId })
+      .populate('show', 'title theater location time price')
+      .sort({ bookedAt: -1 });
+    return res.json({ success: true, tickets: bookings.map(publicTicket) });
+  })
+);
+
+router.get(
+  '/tickets/:id',
+  requireApiKey('tickets', { strict: true }),
+  authIfPresent,
+  asyncRoute(async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+    const booking = await Booking.findById(req.params.id).populate(
+      'show',
+      'title theater location time price'
+    );
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+    // A session/Bearer caller must own this ticket (no IDOR). A key-only caller
+    // is a trusted scanner: it already holds the shared secret and the ticket's
+    // unguessable id, which is exactly how door validation is meant to work.
+    if (req.auth && String(booking.user) !== req.auth.userId) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+    return res.json({ success: true, ticket: publicTicket(booking) });
   })
 );
 
@@ -354,6 +429,7 @@ const parseSeats = (seats) => {
 
 router.post(
   '/payment/checkout',
+  requireApiKey('bookings'),
   requireAuth,
   asyncRoute(async (req, res) => {
     if (!razorpayConfigured()) {
@@ -412,6 +488,7 @@ router.post(
 
 router.post(
   '/payment/confirm',
+  requireApiKey('bookings'),
   requireAuth,
   asyncRoute(async (req, res) => {
     if (!razorpayConfigured()) {

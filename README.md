@@ -34,6 +34,8 @@ In the first terminal, configure and start the backend:
 cd .\backend
 Copy-Item .env.example .env
 # Edit .env and set JWT_SECRET and MONGODB_URI.
+# Optional: SHOWS_API_KEY / BOOKINGS_API_KEY / TICKETS_API_KEY for integrations
+# (see "Integration API keys" below; the SPA works without them).
 npm install
 npm run seed
 npm run dev
@@ -58,9 +60,9 @@ To enable real payments, set `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` in `bac
 
 ## Dependencies
 
-Backend runtime dependencies: Express, Mongoose, CORS, cookie-parser, dotenv, bcryptjs, jsonwebtoken, and Socket.IO. Nodemon is used for backend development.
+Backend runtime dependencies: Express, Mongoose, CORS, cookie-parser, dotenv, bcryptjs, jsonwebtoken, express-rate-limit, and Socket.IO. Nodemon is used for backend development.
 
-Frontend runtime dependencies: React, React DOM, React Router, React Hook Form, Zod, Bootstrap, and Bootstrap Icons. Vite, its React plugin, TypeScript, and React type definitions are development dependencies.
+Frontend runtime dependencies: React, React DOM, React Router, React Hook Form, Zod, socket.io-client, Bootstrap, and Bootstrap Icons. Vite, its React plugin, TypeScript, and React type definitions are development dependencies.
 
 ## API routes
 
@@ -69,13 +71,57 @@ Frontend runtime dependencies: React, React DOM, React Router, React Hook Form, 
 - `POST /api/auth/login`
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
-- `GET /api/shows`
-- `GET /api/shows/:id`
-- `POST /api/bookings` (authenticated)
-- `GET /api/bookings/user` (authenticated)
-- `GET /api/bookings/:id` (authenticated; receipt for a single booking)
-- `POST /api/payment/checkout` (authenticated; creates a Razorpay order)
-- `POST /api/payment/confirm` (authenticated; verifies the payment signature and creates the booking)
+- `GET /api/shows` (shows key optional, see below)
+- `GET /api/shows/:id` (shows key optional)
+- `POST /api/bookings` (authenticated; bookings key optional)
+- `GET /api/bookings/user` (authenticated; bookings key optional)
+- `GET /api/bookings/:id` (authenticated; receipt for a single booking; bookings key optional)
+- `POST /api/payment/checkout` (authenticated; creates a Razorpay order; bookings key optional)
+- `POST /api/payment/confirm` (authenticated; verifies the payment signature and creates the booking; bookings key optional)
+- `GET /api/tickets` (**tickets key required**; authenticated; e-tickets for the signed-in user)
+- `GET /api/tickets/:id` (**tickets key required**; single e-ticket — key-only access allowed for scanners, owner-only when a session is sent)
+
+## Integration API keys
+
+Server-to-server callers (partner apps, door scanners, internal tools) authenticate with
+three separate keys, one per resource group, sent as an `X-API-Key` header:
+
+| Env var | Scope | Rule |
+|---|---|---|
+| `SHOWS_API_KEY` | `GET /api/shows`, `GET /api/shows/:id` | Optional — browsers work without it; a *supplied* key must match |
+| `BOOKINGS_API_KEY` | bookings + payment routes | Optional — same rule |
+| `TICKETS_API_KEY` | `GET /api/tickets`, `GET /api/tickets/:id` | **Required** (401 without, 503 if unset) |
+
+Key properties:
+
+- **The SPA never sends them.** The browser keeps using the JWT cookie as before; keys
+  live only in `backend/.env`, so they stay secret (anything shipped to a browser is
+  public). Cookie/session auth rules are unchanged and still apply on top.
+- **Scope is enforced.** A shows key replayed against `/api/bookings` returns `401`,
+  so each integration only touches its own group and each key can be rotated or
+  revoked independently.
+- **Timing-safe comparison** — wrong keys can't leak the right one by response timing.
+- **Generate** one value per key:
+
+  ```powershell
+  node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
+  ```
+
+  Put each result in `backend/.env` (rotate by replacing the value and restarting;
+  old keys stop working immediately).
+
+Example:
+
+```powershell
+# catalog for a partner site
+curl.exe -H "X-API-Key: $env:SHOWS_API_KEY" http://localhost:5000/api/shows
+
+# door scanner validating a ticket (key alone is enough, no login needed)
+curl.exe -H "X-API-Key: $env:TICKETS_API_KEY" http://localhost:5000/api/tickets/<bookingId>
+```
+
+The tickets responses include a boolean `valid` plus seats, show and venue — everything
+a scanner needs to answer "may this person enter?".
 
 ## Deploy on Vercel (frontend + backend together)
 

@@ -179,6 +179,26 @@ Already fixed before this sweep (verified, no change needed): P1 #1–#5 except 
 - **API E2E: 28/28 PASS** — health, catalog, malformed **and** unknown id → 404, register 201, duplicate 409, `/auth/me`, logout → 401, login + cookie, wrong password 401, unauthenticated booking 401, seat list, `realtime: true`, empty seats 400, >8 seats 400, booking 201, **`booking-confirmed` delivered to the show's room**, **room scoping — a viewer on another show hears nothing**, inventory 60 → 58, double-book 409, `bookings/user` populated, own receipt 200, cross-user receipt 404 (no IDOR), checkout 503, **rate limit 429 on the 10th failed login**, register unaffected, **concurrent duplicate registration → 201 + 409 (never 500)**.
 - **Dev-proxy E2E: 10/10 PASS** — SPA shell, deep link `/bookings`, checkout.js absent from `<head>`, proxied API, cookie round-trip, **socket.io handshake + room join + `booking-confirmed` through the Vite proxy**, `bookings/user` data for the new page. All test users/bookings removed and seats restored; temp scripts deleted.
 
+## Follow-up: per-resource integration API keys (2026-11-05)
+
+Three separate server-to-server keys in `backend/.env`, validated by `backend/apiKeys.js`
+(constant-time `crypto.timingSafeEqual`, `X-API-Key` header):
+
+- `SHOWS_API_KEY` → `GET /api/shows`, `GET /api/shows/:id`; `BOOKINGS_API_KEY` → bookings
+  and payment routes — both **lenient**: the SPA sends no key and behaves exactly as
+  before, but a *supplied* key must match the route's scope (401 otherwise), so keys are
+  scoped, independently rotatable, and can't be replayed across groups.
+- `TICKETS_API_KEY` → new `GET /api/tickets` (e-tickets for the signed-in user) and
+  `GET /api/tickets/:id` — **strict**: 401 without a key, 503 when unset (mirrors the
+  Razorpay disabled pattern). The single-ticket route allows key-only reads for door
+  scanners (unguessable id + shared secret); when session/Bearer credentials are present
+  it enforces owner-only (404 otherwise — no IDOR).
+- Verified: **18/18 E2E** — SPA routes keyless, wrong-scope keys 401 on every group,
+  valid keys pass, tickets 401 without/wrong key, key-only scanner read 200 with
+  `valid: true`, list route still needs a session, cross-user + valid key → 404,
+  malformed id → 404. Vite-proxy smoke: `/api/shows` 200 keyless, `/api/tickets` 401.
+  Test data cleaned, temp scripts deleted.
+
 ## Still open (needs live access, cannot be tested locally)
 
 1. **Live Razorpay cycle** — order → signature → booking, and the refund-on-seat-conflict branch, still need a real `rzp_test_...` key run (unchanged from Part 1).
